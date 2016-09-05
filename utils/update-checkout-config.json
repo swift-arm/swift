@@ -3,31 +3,31 @@
     "https-clone-pattern": "https://github.com/%s.git",
     "repos" : {
         "llvm": {
-            "remote": { "id": "apple/swift-llvm" } },
+            "remote": { "id": "swift-arm/swift-llvm" } },
         "clang": {
-            "remote": { "id": "apple/swift-clang" } },
+            "remote": { "id": "swift-arm/swift-clang" } },
         "swift": {
-            "remote": { "id": "apple/swift" } },
+            "remote": { "id": "swift-arm/swift-swift" } },
         "lldb": {
-            "remote": { "id": "apple/swift-lldb" } },
+            "remote": { "id": "swift-arm/swift-lldb" } },
         "cmark": {
-            "remote": { "id": "apple/swift-cmark" } },
+            "remote": { "id": "swift-arm/swift-cmark" } },
         "llbuild": {
-            "remote": { "id": "apple/swift-llbuild" } },
+            "remote": { "id": "swift-arm/swift-llbuild" } },
         "swiftpm": {
-            "remote": { "id": "apple/swift-package-manager" } },
+            "remote": { "id": "swift-arm/swift-package-manager" } },
         "compiler-rt": {
-            "remote": { "id": "apple/swift-compiler-rt" } },
+            "remote": { "id": "swift-arm/swift-compiler-rt" } },
         "swift-corelibs-xctest": {
-            "remote": { "id": "apple/swift-corelibs-xctest" } },
+            "remote": { "id": "swift-arm/swift-corelibs-xctest" } },
         "swift-corelibs-foundation": {
-            "remote": { "id": "apple/swift-corelibs-foundation" } },
+            "remote": { "id": "swift-arm/swift-corelibs-foundation" } },
         "swift-corelibs-libdispatch": {
-            "remote": { "id": "apple/swift-corelibs-libdispatch" } },
+            "remote": { "id": "swift-arm/swift-corelibs-libdispatch" } },
         "swift-integration-tests": {
-            "remote": { "id": "apple/swift-integration-tests" } },
+            "remote": { "id": "swift-arm/swift-integration-tests" } },
         "swift-xcode-playground-support": {
-            "remote": { "id": "apple/swift-xcode-playground-support" } }
+            "remote": { "id": "swift-arm/swift-xcode-playground-support" } }
     },
     "default-branch-scheme": "master",
     "branch-schemes": {
