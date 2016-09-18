@@ -156,19 +156,11 @@ public struct DateInterval : ReferenceConvertible, Comparable, Hashable {
     
     public var hashValue: Int {
         var buf: (UInt, UInt) = (UInt(start.timeIntervalSinceReferenceDate), UInt(end.timeIntervalSinceReferenceDate))
-        return withUnsafeMutablePointer(&buf) {
-            return Int(bitPattern: CFHashBytes(unsafeBitCast($0, to: UnsafeMutablePointer<UInt8>.self), CFIndex(sizeof(UInt.self) * 2)))
+        return withUnsafeMutablePointer(to: &buf) {
+            return Int(bitPattern: CFHashBytes(unsafeBitCast($0, to: UnsafeMutablePointer<UInt8>.self), CFIndex(MemoryLayout<UInt>.size * 2)))
         }
     }
     
-    public var description: String {
-        return "(Start Date) \(start) + (Duration) \(duration) seconds = (End Date) \(end)"
-    }
-    
-    public var debugDescription: String {
-        return description
-    }
-
     @available(OSX 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *)
     public static func ==(lhs: DateInterval, rhs: DateInterval) -> Bool {
         return lhs.start == rhs.start && lhs.duration == rhs.duration
@@ -178,7 +170,25 @@ public struct DateInterval : ReferenceConvertible, Comparable, Hashable {
     public static func <(lhs: DateInterval, rhs: DateInterval) -> Bool {
         return lhs.compare(rhs) == .orderedAscending
     }
+}
 
+@available(OSX 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *)
+extension DateInterval : CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
+    public var description: String {
+        return "\(start) to \(end)"
+    }
+    
+    public var debugDescription: String {
+        return description
+    }
+
+    public var customMirror: Mirror {
+        var c: [(label: String?, value: Any)] = []
+        c.append((label: "start", value: start))
+        c.append((label: "end", value: end))
+        c.append((label: "duration", value: duration))
+        return Mirror(self, children: c, displayStyle: Mirror.DisplayStyle.struct)
+    }
 }
 
 @available(OSX 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *)
@@ -209,3 +219,13 @@ extension DateInterval : _ObjectiveCBridgeable {
         return result!
     }
 }
+
+@available(OSX 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *)
+extension NSDateInterval : _HasCustomAnyHashableRepresentation {
+    // Must be @nonobjc to avoid infinite recursion during bridging.
+    @nonobjc
+    public func _toCustomAnyHashable() -> AnyHashable? {
+        return AnyHashable(self as DateInterval)
+    }
+}
+

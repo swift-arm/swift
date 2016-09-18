@@ -558,7 +558,7 @@ func f1() {
 
 // <rdar://problem/20489838> QoI: Nonsensical error and fixit if "let" is missing between 'if let ... where' clauses
 func testMultiPatternConditionRecovery(x: Int?) {
-  // expected-warning@+1 {{expected ',' joining parts of a multi-clause condition}} {{16-21=,}}
+  // expected-error@+1 {{expected ',' joining parts of a multi-clause condition}} {{16-21=,}}
   if let y = x where y == 0, let z = x {
     _ = y
     _ = z
@@ -568,7 +568,7 @@ func testMultiPatternConditionRecovery(x: Int?) {
     z = y; y = z
   }
 
-  if var y = x, z = x { // expected-warning {{expected 'var' in conditional}} {{17-17=var }}
+  if var y = x, z = x { // expected-error {{expected 'var' in conditional}} {{17-17=var }}
     z = y; y = z
   }
 
@@ -657,6 +657,7 @@ infix operator · {  // expected-error {{'·' is considered to be an identifier,
 // <rdar://problem/21712891> Swift Compiler bug: String subscripts with range should require closing bracket.
 func r21712891(s : String) -> String {
   let a = s.startIndex..<s.startIndex
+  _ = a
   // The specific errors produced don't actually matter, but we need to reject this.
   return "\(s[a)"  // expected-error 3 {{}}
 }

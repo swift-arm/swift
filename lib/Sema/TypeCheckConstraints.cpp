@@ -226,17 +226,6 @@ Expr *ConstraintLocatorBuilder::trySimplifyToExpr() const {
   return (path.empty() ? anchor : nullptr);
 }
 
-bool constraints::hasTrailingClosure(const ConstraintLocatorBuilder &locator) {
-  if (Expr *e = locator.trySimplifyToExpr()) {
-    if (ParenExpr *parenExpr = dyn_cast<ParenExpr>(e)) {
-      return parenExpr->hasTrailingClosure();
-    } else if (TupleExpr *tupleExpr = dyn_cast<TupleExpr>(e)) {
-      return tupleExpr->hasTrailingClosure();
-    }
-  }
-  return false;
-}
-
 //===----------------------------------------------------------------------===//
 // High-level entry points.
 //===----------------------------------------------------------------------===//
@@ -546,7 +535,8 @@ resolveDeclRefExpr(UnresolvedDeclRefExpr *UDRE, DeclContext *DC) {
     }
 
     return buildRefExpr(ResultValues, DC, UDRE->getNameLoc(),
-                        UDRE->isImplicit(), UDRE->isSpecialized());
+                        UDRE->isImplicit(), UDRE->isSpecialized(),
+                        UDRE->getFunctionRefKind());
   }
 
   ResultValues.clear();
@@ -618,6 +608,91 @@ TypeChecker::getSelfForInitDelegationInConstructor(DeclContext *DC,
 }
 
 namespace {
+  /// Update the function reference kind based on adding a direct call to a
+  /// callee with this kind.
+  FunctionRefKind addingDirectCall(FunctionRefKind kind) {
+    switch (kind) {
+    case FunctionRefKind::Unapplied:
+      return FunctionRefKind::SingleApply;
+
+    case FunctionRefKind::SingleApply:
+    case FunctionRefKind::DoubleApply:
+      return FunctionRefKind::DoubleApply;
+
+    case FunctionRefKind::Compound:
+      return FunctionRefKind::Compound;
+    }
+  }
+
+  /// Update a direct callee expression node that has a function reference kind
+  /// based on seeing a call to this callee.
+  template<typename E,
+           typename = decltype(((E*)nullptr)->getFunctionRefKind())> 
+  void tryUpdateDirectCalleeImpl(E *callee, int) {
+    callee->setFunctionRefKind(addingDirectCall(callee->getFunctionRefKind()));
+  }
+
+  /// Version of tryUpdateDirectCalleeImpl for when the callee
+  /// expression type doesn't carry a reference.
+  template<typename E> 
+  void tryUpdateDirectCalleeImpl(E *callee, ...) { }
+
+  /// The given expression is the direct callee of a call expression; mark it to
+  /// indicate that it has been called.
+  void markDirectCallee(Expr *callee) {
+    while (true) {
+      // Look through identity expressions.
+      if (auto identity = dyn_cast<IdentityExpr>(callee)) {
+        callee = identity->getSubExpr();
+        continue;
+      }
+
+      // Look through unresolved 'specialize' expressions.
+      if (auto specialize = dyn_cast<UnresolvedSpecializeExpr>(callee)) {
+        callee = specialize->getSubExpr();
+        continue;
+      }
+      
+      // Look through optional binding.
+      if (auto bindOptional = dyn_cast<BindOptionalExpr>(callee)) {
+        callee = bindOptional->getSubExpr();
+        continue;
+      }
+
+      // Look through forced binding.
+      if (auto force = dyn_cast<ForceValueExpr>(callee)) {
+        callee = force->getSubExpr();
+        continue;
+      }
+
+      // Calls compose.
+      if (auto call = dyn_cast<CallExpr>(callee)) {
+        callee = call->getFn();
+        continue;
+      }
+
+      // Coercions can be used for disambiguation.
+      if (auto coerce = dyn_cast<CoerceExpr>(callee)) {
+        callee = coerce->getSubExpr();
+        continue;
+      }
+
+      // We're done.
+      break;
+    }
+                                
+    // Cast the callee to its most-specific class, then try to perform an
+    // update. If the expression node has a declaration reference in it, the
+    // update will succeed. Otherwise, we're done propagating.
+    switch (callee->getKind()) {
+#define EXPR(Id, Parent)                                  \
+    case ExprKind::Id:                                    \
+      tryUpdateDirectCalleeImpl(cast<Id##Expr>(callee), 0); \
+      break;
+#include "swift/AST/ExprNodes.def"
+    }
+  }
+
   class PreCheckExpression : public ASTWalker {
     TypeChecker &TC;
     DeclContext *DC;
@@ -702,6 +777,10 @@ namespace {
       // Remove this expression from the stack.
       assert(ExprStack.back() == expr);
       ExprStack.pop_back();
+
+      // Mark the direct callee as being a callee.
+      if (auto call = dyn_cast<CallExpr>(expr))
+        markDirectCallee(call->getFn());
 
       // Fold sequence expressions.
       if (auto seqExpr = dyn_cast<SequenceExpr>(expr)) {
@@ -1268,54 +1347,27 @@ solveForExpression(Expr *&expr, DeclContext *dc, Type convertType,
                    ExprTypeCheckListener *listener, ConstraintSystem &cs,
                    SmallVectorImpl<Solution> &viable,
                    TypeCheckExprOptions options) {
-
   // First, pre-check the expression, validating any types that occur in the
   // expression and folding sequence expressions.
   if (preCheckExpression(*this, expr, dc))
     return true;
 
-  if (auto generatedExpr = cs.generateConstraints(expr))
-    expr = generatedExpr;
-  else {
-    return true;
-  }
-
-  // If there is a type that we're expected to convert to, add the conversion
-  // constraint.
-  if (convertType) {
-    auto constraintKind = ConstraintKind::Conversion;
-    if (cs.getContextualTypePurpose() == CTP_CallArgument)
-      constraintKind = ConstraintKind::ArgumentConversion;
-      
-    if (allowFreeTypeVariables == FreeTypeVariableBinding::UnresolvedType) {
-      convertType = convertType.transform([&](Type type) -> Type {
-        if (type->is<UnresolvedType>())
-          return cs.createTypeVariable(cs.getConstraintLocator(expr), 0);
-        return type;
-      });
-    }
-    
-    cs.addConstraint(constraintKind, expr->getType(), convertType,
-                     cs.getConstraintLocator(expr), /*isFavored*/ true);
-  }
-
-  // Notify the listener that we've built the constraint system.
-  if (listener && listener->builtConstraints(cs, expr)) {
-    return true;
-  }
-
-  if (getLangOpts().DebugConstraintSolver) {
-    auto &log = Context.TypeCheckerDebug->getStream();
-    log << "---Initial constraints for the given expression---\n";
-    expr->print(log);
-    log << "\n";
-    cs.print(log);
-  }
-
   // Attempt to solve the constraint system.
-  if (cs.solve(viable, allowFreeTypeVariables) ||
-      (viable.size() != 1 &&
-       !options.contains(TypeCheckExprFlags::AllowUnresolvedTypeVariables))) {
+  auto solution = cs.solve(expr,
+                           convertType,
+                           listener,
+                           viable,
+                           allowFreeTypeVariables);
+
+  // The constraint system has failed
+  if (solution == ConstraintSystem::SolutionKind::Error)
+    return true;
+
+  // If the system is unsolved or there are multiple solutions present but
+  // type checker options do not allow unresolved types, let's try to salvage
+  if (solution == ConstraintSystem::SolutionKind::Unsolved
+      || (viable.size() != 1 &&
+          !options.contains(TypeCheckExprFlags::AllowUnresolvedTypeVariables))) {
     if (options.contains(TypeCheckExprFlags::SuppressDiagnostics))
       return true;
 
@@ -1564,6 +1616,35 @@ getTypeOfExpressionWithoutApplying(Expr *&expr, DeclContext *dc,
   auto semanticExpr = expr->getSemanticsProvidingExpr();
   auto topLocator = cs.getConstraintLocator(semanticExpr);
   referencedDecl = solution.resolveLocatorToDecl(topLocator);
+
+  if (!referencedDecl.getDecl()) {
+    // Do another check in case we have a curried call from binding a function
+    // reference to a variable, for example:
+    //
+    //   class C {
+    //     func instanceFunc(p1: Int, p2: Int) {}
+    //   }
+    //   func t(c: C) {
+    //     C.instanceFunc(c)#^COMPLETE^#
+    //   }
+    //
+    // We need to get the referenced function so we can complete the argument
+    // labels. (Note that the requirement to have labels in the curried call
+    // seems inconsistent with the removal of labels from function types.
+    // If this changes the following code could be removed).
+    if (auto *CE = dyn_cast<CallExpr>(semanticExpr)) {
+      if (auto *UDE = dyn_cast<UnresolvedDotExpr>(CE->getFn())) {
+        if (isa<TypeExpr>(UDE->getBase())) {
+          auto udeLocator = cs.getConstraintLocator(UDE);
+          auto udeRefDecl = solution.resolveLocatorToDecl(udeLocator);
+          if (auto *FD = dyn_cast_or_null<FuncDecl>(udeRefDecl.getDecl())) {
+            if (FD->isInstanceMember())
+              referencedDecl = udeRefDecl;
+          }
+        }
+      }
+    }
+  }
 
   // Recover the original type if needed.
   recoverOriginalType();
@@ -1962,7 +2043,9 @@ bool TypeChecker::typeCheckForEachBinding(DeclContext *dc, ForEachStmt *stmt) {
         cs.addConstraint(Constraint::create(
                            cs, ConstraintKind::TypeMember,
                            SequenceType, iteratorType,
-                           tc.Context.Id_Iterator, iteratorLocator));
+                           tc.Context.Id_Iterator,
+                           FunctionRefKind::Compound,
+                           iteratorLocator));
 
         // Determine the element type of the iterator.
         // FIXME: Should look up the type witness.
@@ -1970,7 +2053,9 @@ bool TypeChecker::typeCheckForEachBinding(DeclContext *dc, ForEachStmt *stmt) {
         cs.addConstraint(Constraint::create(
                            cs, ConstraintKind::TypeMember,
                            iteratorType, elementType,
-                           tc.Context.Id_Element, elementLocator));
+                           tc.Context.Id_Element,
+                           FunctionRefKind::Compound,
+                           elementLocator));
       }
       
 
@@ -2225,7 +2310,8 @@ bool TypeChecker::typeCheckExprPattern(ExprPattern *EP, DeclContext *DC,
   // Build the 'expr ~= var' expression.
   // FIXME: Compound name locations.
   auto *matchOp = buildRefExpr(choices, DC, DeclNameLoc(EP->getLoc()),
-                               /*Implicit=*/true);
+                               /*Implicit=*/true, /*isSpecialized=*/false,
+                               FunctionRefKind::Compound);
   auto *matchVarRef = new (Context) DeclRefExpr(matchVar,
                                                 DeclNameLoc(EP->getLoc()),
                                                 /*Implicit=*/true);
@@ -2550,6 +2636,15 @@ void Solution::dump(raw_ostream &out) const {
     }
   }
 
+  if (!DefaultedTypeVariables.empty()) {
+    out << "\nDefaulted type variables: ";
+    interleave(DefaultedTypeVariables, [&](TypeVariableType *typeVar) {
+      out << "$T" << typeVar->getID();
+    }, [&] {
+      out << ", ";
+    });
+  }
+
   if (!Fixes.empty()) {
     out << "\nFixes:\n";
     for (auto &fix : Fixes) {
@@ -2697,6 +2792,15 @@ void ConstraintSystem::print(raw_ostream &out) {
       out << " opens to " << openedExistential.second->getString();
       out << "\n";
     }
+  }
+
+  if (!DefaultedTypeVariables.empty()) {
+    out << "\nDefaulted type variables: ";
+    interleave(DefaultedTypeVariables, [&](TypeVariableType *typeVar) {
+      out << "$T" << typeVar->getID();
+    }, [&] {
+      out << ", ";
+    });
   }
 
   if (failedConstraint) {
@@ -2858,6 +2962,10 @@ CheckedCastKind TypeChecker::typeCheckCheckedCast(Type fromType,
       return CheckedCastKind::SetDowncast;
     }
     return CheckedCastKind::SetDowncastBridged;
+  }
+
+  if (cs.isAnyHashableType(toType) || cs.isAnyHashableType(fromType)) {
+    return CheckedCastKind::ValueCast;
   }
 
   // If the destination type is a subtype of the source type, we have

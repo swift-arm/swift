@@ -3,6 +3,144 @@ Note: This is in reverse chronological order, so newer entries are added to the 
 Swift 3.0
 ---------
 
+* [SE-0136](https://github.com/apple/swift-evolution/blob/master/proposals/0136-memory-layout-of-values.md) and [SE-0101](https://github.com/apple/swift-evolution/blob/master/proposals/0101-standardizing-sizeof-naming.md)
+
+  The functions `sizeof()`, `strideof()`, and `alignof()` have been removed.
+  Instead, these memory layout properties for a type `T` are now spelled
+  `MemoryLayout<T>.size`, `MemoryLayout<T>.stride`, and
+  `MemoryLayout<T>.alignment`, respectively.
+
+  The functions `sizeofValue()`, `strideofValue()`, and `alignofValue()` have
+  been renamed `MemoryLayout.size(ofValue:)`, `MemoryLayout.stride(ofValue:)`,
+  and `MemoryLayout.alignment(ofValue:)`.
+
+* [SE-0128](https://github.com/apple/swift-evolution/blob/master/proposals/0128-unicodescalar-failable-initializer.md)
+
+  Some UnicodeScalar initializers (ones that are non-failable) now return an Optional, 
+  i.e., in case a UnicodeScalar can not be constructed, nil is returned.
+
+  ```swift
+  // Old
+  var string = ""
+  let codepoint: UInt32 = 55357 // this is invalid
+  let ucode = UnicodeScalar(codepoint) // Program crashes at this point.
+  string.append(ucode)
+  ``` 
+
+  After marking the initializer as failable, users can write code like this and the
+  program will execute fine even if the codepoint isn't valid.
+
+  ```swift
+  // New 
+  var string = ""
+  let codepoint: UInt32 = 55357 // this is invalid
+  if let ucode = UnicodeScalar(codepoint) {
+    string.append(ucode)
+  } else {
+    // do something else
+  }
+  ``` 
+
+* [SE-103](https://github.com/apple/swift-evolution/blob/master/proposals/0103-make-noescape-default.md)
+
+  Closure parameters are non-escaping by default, rather than explicitly being
+  annotated `@noescape`. Use `@escaping` to say that a closure parameter may
+  escape. `@autoclosure(escaping)` is now spelled `@autoclosure @escaping`.
+  `@noescape` and `@autoclosure(escaping)` are deprecated.
+
+* [SE-0115](https://github.com/apple/swift-evolution/blob/master/proposals/0115-literal-syntax-protocols.md)
+
+  To clarify the role of `*LiteralConvertible` protocols, they have 
+  been renamed to `ExpressibleBy*Literal`.  No requirements of these 
+  protocols have changed.
+
+* [SE-0107](https://github.com/apple/swift-evolution/blob/master/proposals/0107-unsaferawpointer.md)
+
+  An `Unsafe[Mutable]RawPointer` type has been introduced. It
+  replaces `Unsafe[Mutable]Pointer<Void>`. Conversion from
+  `UnsafePointer<T>` to `UnsafePointer<U>` has been
+  disallowed. `Unsafe[Mutable]RawPointer` provides an API for untyped
+  memory access, and an API for binding memory to a type. Binding
+  memory allows for safe conversion between pointer types.
+
+* [SE-0096](https://github.com/apple/swift-evolution/blob/master/proposals/0096-dynamictype.md):
+
+  The `dynamicType` keyword has been removed from Swift.  In its place a new
+  primitive function `type(of:)` has been added to the language.  Existing code
+  that uses the `.dynamicType` member to retrieve the type of an expression 
+  should migrate to this new primitive.  Code that is using `.dynamicType` in 
+  conjunction with `sizeof` should migrate to the `MemoryLayout` structure provided by
+  [SE-0101](https://github.com/apple/swift-evolution/blob/master/proposals/0101-standardizing-sizeof-naming.md).
+
+* [SE-0111](https://github.com/apple/swift-evolution/blob/master/proposals/0111-remove-arg-label-type-significance.md):
+
+  Argument labels have been removed from Swift function types. Instead, they are
+  part of the name of a function, subscript, or initializer. Calls to a function
+  or initializer, or uses of a subscript, still require argument labels, as they
+  always have:
+
+  ```swift
+    func doSomething(x: Int, y: Int) { }
+    doSomething(x: 0, y: 0)     // argument labels are required
+  ```
+
+  However, unapplied references to functions or initializers no longer carry
+  argument labels. For example:
+
+  ```swift
+  let f = doSomething(x:y:)     // inferred type is now (Int, Int) -> Void
+  ```
+
+  Additionally, explicitly-written function types can no longer carry argument
+  labels, although one can still provide parameter name for documentation
+  purposes using the '_' in the argument label position:
+
+  ```swift
+  typealias CompletionHandler =
+     (token: Token, error: Error?) -> Void   // error: function types cannot have argument labels
+
+  typealias CompletionHandler =
+     (_ token: Token, _ error: Error?) -> Void   // error: okay: names are for documentation purposes
+  ```
+
+* [SE-0025](https://github.com/apple/swift-evolution/blob/master/proposals/0025-scoped-access-level.md): A declaration marked as `private` can now only be accessed within the lexical scope it is declared in (essentially the enclosing curly braces `{}`). A `private` declaration at the top level of a file can be accessed anywhere in that file, as in Swift 2. The access level formerly known as `private` is now called `fileprivate`.
+
+* [SE-0131](https://github.com/apple/swift-evolution/blob/master/proposals/0131-anyhashable.md):
+  The standard library provides a new type `AnyHashable` for use in heterogenous
+  hashed collections. Untyped `NSDictionary` and `NSSet` APIs from Objective-C
+  now import as `[AnyHashable: Any]` and `Set<AnyHashable>`.
+
+* [SE-0102](https://github.com/apple/swift-evolution/blob/master/proposals/0102-noreturn-bottom-type.md)
+  The `@noreturn` attribute on function declarations and function types has been removed,
+  in favor of an empty `Never` type:
+
+  ```swift
+  @noreturn func fatalError(msg: String) { ... }  // old
+  func fatalError(msg: String) -> Never { ... }   // new
+
+  func performOperation<T>(continuation: @noreturn T -> ()) { ... }  // old
+  func performOperation<T>(continuation: T -> Never) { ... }         // new
+  ```
+
+* [SE-0116](https://github.com/apple/swift-evolution/blob/master/proposals/0116-id-as-any.md):
+  Objective-C APIs using `id` now import into Swift as `Any` instead of as `AnyObject`.
+  Similarly, APIs using untyped `NSArray` and `NSDictionary` import as `[Any]` and
+  `[AnyHashable: Any]`, respectively.
+
+* [SE-0072](https://github.com/apple/swift-evolution/blob/master/proposals/0072-eliminate-implicit-bridging-conversions.md):
+  Bridging conversions are no longer implicit. The conversion from a Swift value type to
+  its corresponding object can be forced with `as`, e.g. `string as NSString`. Any Swift
+  value can also be converted to its boxed `id` representation with `as AnyObject`.
+
+* Collection subtype conversions and dynamic casts now work with protocol types:
+
+    ```swift
+    protocol P {}; extension Int: P {}
+    var x: [Int] = [1, 2, 3]
+    var p: [P] = x
+    var x2 = p as! [Int]
+    ```
+
 * [SR-2131](https://bugs.swift.org/browse/SR-2131):
   The `hasPrefix` and `hasSuffix` functions now consider the empty string to be a
   prefix and suffix of all strings.

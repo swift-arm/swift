@@ -944,7 +944,8 @@ public:
                             const TypeLowering &existentialTL,
                             ArrayRef<ProtocolConformanceRef> conformances,
                             SGFContext C,
-                            llvm::function_ref<ManagedValue (SGFContext)> F);
+                            llvm::function_ref<ManagedValue (SGFContext)> F,
+                            bool allowEmbeddedNSError = true);
 
   //===--------------------------------------------------------------------===//
   // Recursive entry points
@@ -1005,6 +1006,10 @@ public:
   ManagedValue emitRValueAsOrig(Expr *E, AbstractionPattern origPattern,
                                 const TypeLowering &origTL,
                                 SGFContext C = SGFContext());
+
+  /// Emit an r-value into temporary memory and return the managed address.
+  ManagedValue
+  emitMaterializedRValueAsOrig(Expr *E, AbstractionPattern origPattern);
   
   /// Emit the given expression, ignoring its result.
   void emitIgnoredExpr(Expr *E);
@@ -1252,6 +1257,9 @@ public:
                                 SILType substFnType,
                                 ArrayRef<Substitution> subs,
                                 ArrayRef<SILValue> args);
+
+  /// Emit a literal that applies the various initializers.
+  RValue emitLiteral(LiteralExpr *literal, SGFContext C);
 
   SILBasicBlock *getTryApplyErrorDest(SILLocation loc,
                                       SILResultInfo exnResult,

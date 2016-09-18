@@ -1,11 +1,11 @@
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=AVAILABILITY1 | FileCheck %s -check-prefix=AVAILABILITY1
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=AVAILABILITY2 | FileCheck %s -check-prefix=AVAILABILITY2
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=KEYWORD1 | FileCheck %s -check-prefix=KEYWORD1
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=KEYWORD2 | FileCheck %s -check-prefix=KEYWORD2
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=KEYWORD3 | FileCheck %s -check-prefix=KEYWORD3
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=KEYWORD4 | FileCheck %s -check-prefix=KEYWORD4
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=KEYWORD5 | FileCheck %s -check-prefix=KEYWORD5
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=KEYWORD_LAST | FileCheck %s -check-prefix=KEYWORD_LAST
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=AVAILABILITY1 | %FileCheck %s -check-prefix=AVAILABILITY1
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=AVAILABILITY2 | %FileCheck %s -check-prefix=AVAILABILITY2
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=KEYWORD1 | %FileCheck %s -check-prefix=KEYWORD1
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=KEYWORD2 | %FileCheck %s -check-prefix=KEYWORD2
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=KEYWORD3 | %FileCheck %s -check-prefix=KEYWORD3
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=KEYWORD4 | %FileCheck %s -check-prefix=KEYWORD4
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=KEYWORD5 | %FileCheck %s -check-prefix=KEYWORD5
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=KEYWORD_LAST | %FileCheck %s -check-prefix=KEYWORD_LAST
 
 @available(#^AVAILABILITY1^#)
 
@@ -25,10 +25,10 @@
 
 // AVAILABILITY2:             Begin completions, 5 items
 // AVAILABILITY2-NEXT:        Keyword/None:                       unavailable; name=unavailable{{$}}
-// AVAILABILITY2-NEXT:        Keyword/None:                       message=[#Specify message#]; name=message{{$}}
-// AVAILABILITY2-NEXT:        Keyword/None:                       renamed=[#Specify replacing name#]; name=renamed{{$}}
-// AVAILABILITY2-NEXT:        Keyword/None:                       introduced=[#Specify version number#]; name=introduced{{$}}
-// AVAILABILITY2-NEXT:        Keyword/None:                       deprecated=[#Specify version number#]; name=deprecated{{$}}
+// AVAILABILITY2-NEXT:        Keyword/None:                       message: [#Specify message#]; name=message{{$}}
+// AVAILABILITY2-NEXT:        Keyword/None:                       renamed: [#Specify replacing name#]; name=renamed{{$}}
+// AVAILABILITY2-NEXT:        Keyword/None:                       introduced: [#Specify version number#]; name=introduced{{$}}
+// AVAILABILITY2-NEXT:        Keyword/None:                       deprecated: [#Specify version number#]; name=deprecated{{$}}
 // AVAILABILITY2-NEXT:        End completions
 
 

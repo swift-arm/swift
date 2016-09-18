@@ -75,6 +75,10 @@ namespace {
   };
 }
 
+using AssociativityCacheType =
+  llvm::DenseMap<std::pair<PrecedenceGroupDecl *, PrecedenceGroupDecl *>,
+                 Associativity>;
+
 struct ASTContext::Implementation {
   Implementation();
   ~Implementation();
@@ -88,6 +92,21 @@ struct ASTContext::Implementation {
   LazyResolver *Resolver = nullptr;
 
   llvm::StringMap<char, llvm::BumpPtrAllocator&> IdentifierTable;
+
+  /// The declaration of Swift.AssignmentPrecedence.
+  PrecedenceGroupDecl *AssignmentPrecedence = nullptr;
+
+  /// The declaration of Swift.CastingPrecedence.
+  PrecedenceGroupDecl *CastingPrecedence = nullptr;
+
+  /// The declaration of Swift.FunctionArrowPrecedence.
+  PrecedenceGroupDecl *FunctionArrowPrecedence = nullptr;
+
+  /// The declaration of Swift.TernaryPrecedence.
+  PrecedenceGroupDecl *TernaryPrecedence = nullptr;
+
+  /// The declaration of Swift.DefaultPrecedence.
+  PrecedenceGroupDecl *DefaultPrecedence = nullptr;
 
   /// The declaration of Swift.Bool.
   NominalTypeDecl *BoolDecl = nullptr;
@@ -118,6 +137,9 @@ struct ASTContext::Implementation {
 
   /// The declaration of Swift.Dictionary<T>.
   NominalTypeDecl *DictionaryDecl = nullptr;
+
+  /// The declaration of Swift.AnyHashable.
+  NominalTypeDecl *AnyHashableDecl = nullptr;
 
   /// The declaration of Swift.Optional<T>.
   EnumDecl *OptionalDecl = nullptr;
@@ -222,6 +244,9 @@ struct ASTContext::Implementation {
   /// This applies to both actual imported functions and to @objc functions.
   llvm::DenseMap<const AbstractFunctionDecl *,
                  ForeignErrorConvention> ForeignErrorConventions;
+
+  /// Cache of previously looked-up precedence queries.
+  AssociativityCacheType AssociativityCache;
 
   /// Map from normal protocol conformances to diagnostics that have
   /// been delayed until the conformance is fully checked.
@@ -587,7 +612,7 @@ CanType ASTContext::getExceptionType() const {
   }
 }
 
-NominalTypeDecl *ASTContext::getErrorDecl() const {
+ProtocolDecl *ASTContext::getErrorDecl() const {
   return getProtocol(KnownProtocolKind::Error);
 }
 
@@ -613,6 +638,12 @@ NominalTypeDecl *ASTContext::getDictionaryDecl() const {
   if (!Impl.DictionaryDecl)
     Impl.DictionaryDecl = findStdlibType(*this, "Dictionary", 2);
   return Impl.DictionaryDecl;
+}
+
+NominalTypeDecl *ASTContext::getAnyHashableDecl() const {
+  if (!Impl.AnyHashableDecl)
+    Impl.AnyHashableDecl = findStdlibType(*this, "AnyHashable", 0);
+  return Impl.AnyHashableDecl;
 }
 
 EnumDecl *ASTContext::getOptionalDecl(OptionalTypeKind kind) const {
@@ -1103,6 +1134,99 @@ FuncDecl *ASTContext::getIsOSVersionAtLeastDecl(LazyResolver *resolver) const {
 
   Impl.IsOSVersionAtLeastDecl = decl;
   return decl;
+}
+
+static bool isHigherPrecedenceThan(PrecedenceGroupDecl *a,
+                                   PrecedenceGroupDecl *b) {
+  assert(a != b && "exact match should already have been filtered");
+
+  SmallVector<PrecedenceGroupDecl*, 4> stack;
+
+  // Compute the transitive set of precedence groups that are
+  // explicitly lower than 'b', including 'b' itself.  This is expected
+  // to be very small, since it's only legal in downstream modules.
+  SmallPtrSet<PrecedenceGroupDecl*, 4> targets;
+  targets.insert(b);
+  stack.push_back(b);
+  do {
+    auto cur = stack.pop_back_val();
+    for (auto &rel : cur->getLowerThan()) {
+      auto group = rel.Group;
+
+      // If we ever see 'a', we're done.
+      if (group == a) return true;
+
+      // Protect against invalid ASTs where the group isn't actually set.
+      if (!group) continue;
+
+      // If we've already inserted this, don't add it to the queue.
+      if (!targets.insert(group).second) continue;
+
+      stack.push_back(group);
+    }
+  } while (!stack.empty());
+
+  // Walk down the higherThan relationships from 'a' and look for
+  // anything in the set we just built.
+  stack.push_back(a);
+  do {
+    auto cur = stack.pop_back_val();
+    assert(!targets.count(cur));
+
+    for (auto &rel : cur->getHigherThan()) {
+      auto group = rel.Group;
+
+      if (!group) continue;
+
+      // If we ever see a group that's in the targets set, we're done.
+      if (targets.count(group)) return true;
+
+      stack.push_back(group);
+    }
+  } while (!stack.empty());
+
+  return false;
+}
+
+static Associativity computeAssociativity(AssociativityCacheType &cache,
+                                          PrecedenceGroupDecl *left,
+                                          PrecedenceGroupDecl *right) {
+  auto it = cache.find({left, right});
+  if (it != cache.end()) return it->second;
+
+  auto result = Associativity::None;
+  if (isHigherPrecedenceThan(left, right))
+    result = Associativity::Left;
+  else if (isHigherPrecedenceThan(right, left))
+    result = Associativity::Right;
+  cache.insert({{left, right}, result});
+  return result;
+}
+
+Associativity
+ASTContext::associateInfixOperators(PrecedenceGroupDecl *left,
+                                    PrecedenceGroupDecl *right) const {
+  // If the operators are in the same precedence group, use the group's
+  // associativity.
+  if (left == right) {
+    return left->getAssociativity();
+  }
+
+  // This relationship is antisymmetric, so we can canonicalize to avoid
+  // computing it twice.  Arbitrarily, if the pointer value of 'left'
+  // is greater than the pointer value of 'right', we flip them and
+  // then flip the result.
+
+  if (uintptr_t(left) < uintptr_t(right)) {
+    return computeAssociativity(Impl.AssociativityCache, left, right);
+  }
+
+  switch (computeAssociativity(Impl.AssociativityCache, right, left)) {
+  case Associativity::Left: return Associativity::Right;
+  case Associativity::Right: return Associativity::Left;
+  case Associativity::None: return Associativity::None;
+  }
+  llvm_unreachable("bad associativity");
 }
 
 // Find library intrinsic function.
@@ -2454,29 +2578,6 @@ Optional<KnownFoundationEntity> swift::getKnownFoundationEntity(StringRef name){
     .Default(None);
 }
 
-bool swift::nameConflictsWithStandardLibrary(KnownFoundationEntity entity) {
-  switch (entity) {
-  case KnownFoundationEntity::NSArray:
-  case KnownFoundationEntity::NSDictionary:
-  case KnownFoundationEntity::NSInteger:
-  case KnownFoundationEntity::NSRange:
-  case KnownFoundationEntity::NSSet:
-  case KnownFoundationEntity::NSString:
-  case KnownFoundationEntity::NSCopying:
-  case KnownFoundationEntity::NSError:
-  case KnownFoundationEntity::NSErrorPointer:
-  case KnownFoundationEntity::NSNumber:
-  case KnownFoundationEntity::NSObject:
-  case KnownFoundationEntity::NSUInteger:
-  case KnownFoundationEntity::NSURL:
-  case KnownFoundationEntity::NSZone:
-    return true;
-
-  case KnownFoundationEntity::NSStringEncoding:
-    return false;
-  }
-}
-
 StringRef ASTContext::getSwiftName(KnownFoundationEntity kind) {
   StringRef objcName;
   switch (kind) {
@@ -2485,13 +2586,6 @@ StringRef ASTContext::getSwiftName(KnownFoundationEntity kind) {
     break;
 #include "swift/AST/KnownFoundationEntities.def"
   }
-
-  // If we're omitting needless words and the name won't conflict with
-  // something in the standard library, strip the prefix off the Swift
-  // name.
-  if (LangOpts.StripNSPrefix &&
-      !nameConflictsWithStandardLibrary(kind))
-    return objcName.substr(2);
 
   return objcName;
 }
@@ -3896,6 +3990,7 @@ bool ASTContext::isStandardLibraryTypeBridgedInFoundation(
           nominal == getSetDecl() ||
           nominal == getStringDecl() ||
           nominal == getErrorDecl() ||
+          nominal == getAnyHashableDecl() ||
           // Weird one-off case where CGFloat is bridged to NSNumber.
           nominal->getName() == Id_CGFloat);
 }
@@ -3935,6 +4030,9 @@ ASTContext::getBridgedToObjC(const DeclContext *dc, Type type,
           return None;
       }
     }
+  } else {
+    // Under id-as-any, anything is bridged to objective c.
+    knownBridgedToObjC = true;
   }
 
   if (auto metaTy = type->getAs<MetatypeType>())
@@ -3975,9 +4073,14 @@ ASTContext::getBridgedToObjC(const DeclContext *dc, Type type,
       *bridgedValueType = type;
 
     // Find the Objective-C class type we bridge to.
-    return ProtocolConformance::getTypeWitnessByName(
-             type, conformance->getConcrete(), Id_ObjectiveCType,
-             resolver);
+    if (conformance->isConcrete()) {
+      return ProtocolConformance::getTypeWitnessByName(
+               type, conformance->getConcrete(), Id_ObjectiveCType,
+               resolver);
+    } else {
+      return type->castTo<ArchetypeType>()->getNestedType(Id_ObjectiveCType)
+        .getValue();
+    }
   }
 
   // Do we conform to Error?

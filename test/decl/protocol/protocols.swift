@@ -70,7 +70,7 @@ class NotPrintableC : CustomStringConvertible, Any {} // expected-error{{type 'N
 enum NotPrintableO : Any, CustomStringConvertible {} // expected-error{{type 'NotPrintableO' does not conform to protocol 'CustomStringConvertible'}}
 
 struct NotFormattedPrintable : FormattedPrintable { // expected-error{{type 'NotFormattedPrintable' does not conform to protocol 'CustomStringConvertible'}}
-  func print(format: TestFormat) {} // expected-note{{candidate has non-matching type '(format: TestFormat) -> ()'}}
+  func print(format: TestFormat) {} // expected-note{{candidate has non-matching type '(TestFormat) -> ()'}}
 }
 
 // Circular protocols
@@ -117,7 +117,7 @@ struct IsNotSimpleAssoc : SimpleAssoc {} // expected-error{{type 'IsNotSimpleAss
 
 protocol StreamWithAssoc {
   associatedtype Element
-  func get() -> Element // expected-note{{protocol requires function 'get()' with type '() -> Element'}}
+  func get() -> Element // expected-note{{protocol requires function 'get()' with type '() -> NotAStreamType.Element'}}
 }
 
 struct AnRange<Int> : StreamWithAssoc {
@@ -170,7 +170,7 @@ extension IntIterator : SequenceViaStream {
 }
 
 struct NotSequence : SequenceViaStream { // expected-error{{type 'NotSequence' does not conform to protocol 'SequenceViaStream'}}
-  typealias SequenceStreamTypeType = Int // expected-note{{possibly intended match 'SequenceStreamTypeType' (aka 'Int') does not conform to 'IteratorProtocol'}}
+  typealias SequenceStreamTypeType = Int // expected-note{{possibly intended match 'NotSequence.SequenceStreamTypeType' (aka 'Int') does not conform to 'IteratorProtocol'}}
   func makeIterator() -> Int {}
 }
 
@@ -200,7 +200,7 @@ struct HasNoDefaultArg : ProtoWithDefaultArg {
 // Variadic function requirements
 //===----------------------------------------------------------------------===//
 protocol IntMaxable {
-  func intmax(first: Int, rest: Int...) -> Int // expected-note 2{{protocol requires function 'intmax(first:rest:)' with type '(first: Int, rest: Int...) -> Int'}}
+  func intmax(first: Int, rest: Int...) -> Int // expected-note 2{{protocol requires function 'intmax(first:rest:)' with type '(Int, Int...) -> Int'}}
 }
 
 struct HasIntMax : IntMaxable {
@@ -208,18 +208,18 @@ struct HasIntMax : IntMaxable {
 }
 
 struct NotIntMax1 : IntMaxable  { // expected-error{{type 'NotIntMax1' does not conform to protocol 'IntMaxable'}}
-  func intmax(first: Int, rest: [Int]) -> Int {} // expected-note{{candidate has non-matching type '(first: Int, rest: [Int]) -> Int'}}
+  func intmax(first: Int, rest: [Int]) -> Int {} // expected-note{{candidate has non-matching type '(Int, [Int]) -> Int'}}
 }
 
 struct NotIntMax2 : IntMaxable { // expected-error{{type 'NotIntMax2' does not conform to protocol 'IntMaxable'}}
-  func intmax(first: Int, rest: Int) -> Int {} // expected-note{{candidate has non-matching type '(first: Int, rest: Int) -> Int'}}
+  func intmax(first: Int, rest: Int) -> Int {} // expected-note{{candidate has non-matching type '(Int, Int) -> Int'}}
 }
 
 //===----------------------------------------------------------------------===//
 // 'Self' type
 //===----------------------------------------------------------------------===//
 protocol IsEqualComparable {
-  func isEqual(other: Self) -> Bool // expected-note{{protocol requires function 'isEqual(other:)' with type '(other: WrongIsEqual) -> Bool'}}
+  func isEqual(other: Self) -> Bool // expected-note{{protocol requires function 'isEqual(other:)' with type '(WrongIsEqual) -> Bool'}}
 }
 
 struct HasIsEqual : IsEqualComparable {
@@ -227,7 +227,7 @@ struct HasIsEqual : IsEqualComparable {
 }
 
 struct WrongIsEqual : IsEqualComparable { // expected-error{{type 'WrongIsEqual' does not conform to protocol 'IsEqualComparable'}}
-  func isEqual(other: Int) -> Bool {}  // expected-note{{candidate has non-matching type '(other: Int) -> Bool'}}
+  func isEqual(other: Int) -> Bool {}  // expected-note{{candidate has non-matching type '(Int) -> Bool'}}
 }
 
 //===----------------------------------------------------------------------===//
@@ -235,7 +235,7 @@ struct WrongIsEqual : IsEqualComparable { // expected-error{{type 'WrongIsEqual'
 //===----------------------------------------------------------------------===//
 
 func existentialSequence(_ e: Sequence) { // expected-error{{has Self or associated type requirements}}
-  var x = e.makeIterator() // expected-error{{'Sequence' is not convertible to '<<error type>>'}}
+  var x = e.makeIterator() // expected-error{{type 'Sequence' does not conform to protocol 'IteratorProtocol'}}
   x.next()
   x.nonexistent()
 }
@@ -316,8 +316,8 @@ protocol Eq {
 extension Int : Eq { }
 
 // Matching prefix/postfix.
-prefix operator <> {}
-postfix operator <> {}
+prefix operator <>
+postfix operator <>
 
 protocol IndexValue {
   static prefix func <> (_ max: Self) -> Int
@@ -416,7 +416,7 @@ protocol P1 {
 protocol P2 {
 }
 
-struct X3<T : P1 where T.Assoc : P2> { }
+struct X3<T : P1> where T.Assoc : P2 {}
 
 struct X4 : P1 { // expected-error{{type 'X4' does not conform to protocol 'P1'}}
   func getX1() -> X3<X4> { return X3() }

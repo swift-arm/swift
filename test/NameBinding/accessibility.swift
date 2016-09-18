@@ -1,13 +1,10 @@
 // RUN: rm -rf %t && mkdir -p %t
 // RUN: cp %s %t/main.swift
 
-// RUN: %target-swift-frontend -parse -primary-file %t/main.swift %S/Inputs/accessibility_other.swift -module-name accessibility -enable-source-import -I %S/Inputs -sdk "" -enable-access-control -verify
-// RUN: %target-swift-frontend -parse -primary-file %t/main.swift %S/Inputs/accessibility_other.swift -module-name accessibility -enable-source-import -I %S/Inputs -sdk "" -disable-access-control -D DEFINE_VAR_FOR_SCOPED_IMPORT -D ACCESS_DISABLED
-
 // RUN: %target-swift-frontend -emit-module -o %t %S/Inputs/has_accessibility.swift -D DEFINE_VAR_FOR_SCOPED_IMPORT -enable-testing
 // RUN: %target-swift-frontend -parse -primary-file %t/main.swift %S/Inputs/accessibility_other.swift -module-name accessibility -I %t -sdk "" -enable-access-control -verify
 // RUN: %target-swift-frontend -parse -primary-file %t/main.swift %S/Inputs/accessibility_other.swift -module-name accessibility -I %t -sdk "" -disable-access-control -D ACCESS_DISABLED
-// RUN: not %target-swift-frontend -parse -primary-file %t/main.swift %S/Inputs/accessibility_other.swift -module-name accessibility -I %t -sdk "" -D TESTABLE 2>&1 | FileCheck -check-prefix=TESTABLE %s
+// RUN: not %target-swift-frontend -parse -primary-file %t/main.swift %S/Inputs/accessibility_other.swift -module-name accessibility -I %t -sdk "" -D TESTABLE 2>&1 | %FileCheck -check-prefix=TESTABLE %s
 
 #if TESTABLE
 @testable import has_accessibility
@@ -96,9 +93,10 @@ protocol MethodProto {
 }
 
 extension OriginallyEmpty : MethodProto {}
+#if !ACCESS_DISABLED
 extension HiddenMethod : MethodProto {} // expected-error {{type 'HiddenMethod' does not conform to protocol 'MethodProto'}}
 // TESTABLE-NOT: :[[@LINE-1]]:{{[^:]+}}:
-#if !ACCESS_DISABLED
+
 extension Foo : MethodProto {} // expected-error {{type 'Foo' does not conform to protocol 'MethodProto'}}
 #endif
 
@@ -108,9 +106,10 @@ protocol TypeProto {
 }
 
 extension OriginallyEmpty {}
+#if !ACCESS_DISABLED
 extension HiddenType : TypeProto {} // expected-error {{type 'HiddenType' does not conform to protocol 'TypeProto'}}
 // TESTABLE-NOT: :[[@LINE-1]]:{{[^:]+}}:
-#if !ACCESS_DISABLED
+
 extension Foo : TypeProto {} // expected-error {{type 'Foo' does not conform to protocol 'TypeProto'}}
 #endif
 
@@ -144,7 +143,24 @@ struct ConformerByLocalType : TypeProto {
 }
 
 private struct PrivateConformerByLocalType : TypeProto {
-  private struct TheType {} // okay
+  struct TheType {} // okay
+}
+
+private struct PrivateConformerByLocalTypeBad : TypeProto {
+  private struct TheType {} // expected-error {{struct 'TheType' must be as accessible as its enclosing type because it matches a requirement in protocol 'TypeProto'}} {{3-10=fileprivate}}
 }
 #endif
 
+public protocol Fooable {
+  func foo() // expected-note * {{protocol requires function 'foo()'}}
+}
+
+#if !ACCESS_DISABLED
+internal struct FooImpl: Fooable, HasDefaultImplementation {} // expected-error {{type 'FooImpl' does not conform to protocol 'Fooable'}}
+public struct PublicFooImpl: Fooable, HasDefaultImplementation {} // expected-error {{type 'PublicFooImpl' does not conform to protocol 'Fooable'}}
+// TESTABLE-NOT: method 'foo()'
+
+internal class TestableSub: InternalBase {} // expected-error {{undeclared type 'InternalBase'}}
+public class TestablePublicSub: InternalBase {} // expected-error {{undeclared type 'InternalBase'}}
+// TESTABLE-NOT: undeclared type 'InternalBase'
+#endif

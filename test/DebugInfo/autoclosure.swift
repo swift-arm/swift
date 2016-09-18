@@ -1,4 +1,4 @@
-// RUN: %target-swift-frontend %s -emit-ir -g -o - | FileCheck %s
+// RUN: %target-swift-frontend %s -emit-ir -g -o - | %FileCheck %s
 
 // CHECK: define{{.*}}@_TF11autoclosure7call_meFVs5Int64T_
 // CHECK-NOT: ret void
@@ -12,10 +12,7 @@ func get_truth(_ input: Int64) -> Int64 {
 }
 
 // Since this is an autoclosure test, don't use &&, which is transparent.
-infix operator &&&&& {
-  associativity left
-  precedence 120
-}
+infix operator &&&&& : LogicalConjunctionPrecedence
 
 func &&&&&(lhs: Bool, rhs: @autoclosure () -> Bool) -> Bool {
   return lhs ? rhs() : false

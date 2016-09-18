@@ -287,6 +287,7 @@ namespace {
     
     ImportResult VisitPointerType(const clang::PointerType *type) {      
       auto pointeeQualType = type->getPointeeType();
+      auto quals = pointeeQualType.getQualifiers();
 
       // Special case for NSZone*, which has its own Swift wrapper.
       if (const clang::RecordType *pointee =
@@ -303,7 +304,19 @@ namespace {
             return {wrapperTy, ImportHint::OtherPointer};
         }
       }
-      
+
+      // Import 'void*' as 'UnsafeMutableRawPointer' and 'const void*' as
+      // 'UnsafeRawPointer'. This is Swift's version of an untyped pointer. Note
+      // that 'Unsafe[Mutable]Pointer<T>' implicitly converts to
+      // 'Unsafe[Mutable]RawPointer' for interoperability.
+      if (pointeeQualType->isVoidType()) {
+        return {
+          (quals.hasConst() ? Impl.SwiftContext.getUnsafeRawPointerDecl()
+           : Impl.SwiftContext.getUnsafeMutableRawPointerDecl())
+            ->getDeclaredType(),
+            ImportHint::OtherPointer};
+      }
+
       // All other C pointers to concrete types map to
       // UnsafeMutablePointer<T> or OpaquePointer (FIXME:, except in
       // parameter position under the pre-
@@ -318,7 +331,7 @@ namespace {
         pointeeType = Impl.importType(pointeeQualType,
                                       ImportTypeKind::Pointee,
                                       AllowNSUIntegerAsInt,
-                                      /*can fully bridge*/false);
+                                      /*isFullyBridgeable*/false);
 
       // If the pointed-to type is unrepresentable in Swift, import as
       // OpaquePointer.
@@ -336,8 +349,6 @@ namespace {
         };
       }
 
-      auto quals = pointeeQualType.getQualifiers();
-      
       if (quals.hasConst()) {
         return {Impl.getNamedSwiftTypeSpecialization(Impl.getStdlibModule(),
                                                      "UnsafePointer",
@@ -407,7 +418,7 @@ namespace {
       Type elementType = Impl.importType(type->getElementType(),
                                          ImportTypeKind::Pointee,
                                          AllowNSUIntegerAsInt,
-                                         /*can fully bridge*/false);
+                                         /*isFullyBridgeable*/false);
       if (!elementType)
         return Type();
       
@@ -481,6 +492,7 @@ namespace {
         // FIXME: If we were walking TypeLocs, we could actually get parameter
         // names. The probably doesn't matter outside of a FuncDecl, which
         // we'll have to special-case, but it's an interesting bit of data loss.
+        // We also lose `noescape`. <https://bugs.swift.org/browse/SR-2529>
         params.push_back(swiftParamTy);
       }
 
@@ -908,12 +920,18 @@ namespace {
               return Type();
 
             // The first type argument for Dictionary or Set needs
-            // to be NSObject-bound.
+            // to be Hashable. Everything that inherits NSObject has a
+            // -hash code in ObjC, but if something isn't NSObject, fall back
+            // to AnyHashable as a key type.
             if (unboundDecl == Impl.SwiftContext.getDictionaryDecl() ||
                 unboundDecl == Impl.SwiftContext.getSetDecl()) {
               auto &keyType = importedTypeArgs[0];
-              if (!Impl.matchesNSObjectBound(keyType))
-                keyType = Impl.getNSObjectType();
+              if (!Impl.matchesNSObjectBound(keyType)) {
+                if (auto anyHashable = Impl.SwiftContext.getAnyHashableDecl())
+                  keyType = anyHashable->getDeclaredType();
+                else
+                  keyType = Type();
+              }
             }
 
             // Form the specialized type.
@@ -1003,7 +1021,7 @@ static bool canBridgeTypes(ImportTypeKind importKind) {
   case ImportTypeKind::CFRetainedOutParameter:
   case ImportTypeKind::CFUnretainedOutParameter:
   case ImportTypeKind::Property:
-  case ImportTypeKind::PropertyAccessor:
+  case ImportTypeKind::PropertyWithReferenceSemantics:
   case ImportTypeKind::BridgedValue:
     return true;
   }
@@ -1028,7 +1046,7 @@ static bool isCFAudited(ImportTypeKind importKind) {
   case ImportTypeKind::CFRetainedOutParameter:
   case ImportTypeKind::CFUnretainedOutParameter:
   case ImportTypeKind::Property:
-  case ImportTypeKind::PropertyAccessor:
+  case ImportTypeKind::PropertyWithReferenceSemantics:
     return true;
   }
 }
@@ -1074,8 +1092,7 @@ static Type adjustTypeForConcreteImport(ClangImporter::Implementation &impl,
   // 'void' can only be imported as a function result type.
   if (hint == ImportHint::Void &&
       (importKind == ImportTypeKind::AuditedResult ||
-       importKind == ImportTypeKind::Result ||
-       importKind == ImportTypeKind::PropertyAccessor)) {
+       importKind == ImportTypeKind::Result)) {
     return impl.getNamedSwiftType(impl.getStdlibModule(), "Void");
   }
 
@@ -1251,13 +1268,16 @@ static Type adjustTypeForConcreteImport(ClangImporter::Implementation &impl,
 
   // If we have a bridged Objective-C type and we are allowed to
   // bridge, do so.
-  if (hint == ImportHint::ObjCBridged && canBridgeTypes(importKind))
+  if (hint == ImportHint::ObjCBridged && canBridgeTypes(importKind) &&
+      importKind != ImportTypeKind::PropertyWithReferenceSemantics) {
     // id and Any can be bridged without Foundation. There would be
     // bootstrapping issues with the ObjectiveC module otherwise.
     if (hint.BridgedType->isAny()
         || impl.tryLoadFoundationModule()
-        || impl.ImportForwardDeclarations)
+        || impl.ImportForwardDeclarations) {
       importedType = hint.BridgedType;
+    }
+  }
 
   if (!importedType)
     return importedType;
@@ -1382,8 +1402,38 @@ bool ClangImporter::Implementation::shouldAllowNSUIntegerAsInt(
 Type ClangImporter::Implementation::importPropertyType(
        const clang::ObjCPropertyDecl *decl,
        bool isFromSystemModule) {
+  const auto assignOrUnsafeUnretained =
+      clang::ObjCPropertyDecl::OBJC_PR_assign |
+      clang::ObjCPropertyDecl::OBJC_PR_unsafe_unretained;
+
+  ImportTypeKind importKind;
+  // HACK: Accessibility decls are always imported using bridged types,
+  // because they're inconsistent between properties and methods.
+  if (isAccessibilityDecl(decl)) {
+    importKind = ImportTypeKind::Property;
+  } else {
+    switch (decl->getSetterKind()) {
+    case clang::ObjCPropertyDecl::Assign:
+      // If it's readonly, this might just be returned as a default.
+      if (decl->isReadOnly() &&
+          (decl->getPropertyAttributes() & assignOrUnsafeUnretained) == 0) {
+        importKind = ImportTypeKind::Property;
+      } else {
+        importKind = ImportTypeKind::PropertyWithReferenceSemantics;
+      }
+      break;
+    case clang::ObjCPropertyDecl::Retain:
+    case clang::ObjCPropertyDecl::Copy:
+      importKind = ImportTypeKind::Property;
+      break;
+    case clang::ObjCPropertyDecl::Weak:
+      importKind = ImportTypeKind::PropertyWithReferenceSemantics;
+      break;
+    }
+  }
+
   OptionalTypeKind optionality = OTK_ImplicitlyUnwrappedOptional;
-  return importType(decl->getType(), ImportTypeKind::Property,
+  return importType(decl->getType(), importKind,
                     shouldAllowNSUIntegerAsInt(isFromSystemModule, decl),
                     /*isFullyBridgeable*/ true, optionality);
 }
@@ -1579,7 +1629,7 @@ ParameterList *ClangImporter::Implementation::importFunctionParameterList(
     // It doesn't actually matter which DeclContext we use, so just use the
     // imported header unit.
     auto paramInfo = createDeclWithClangNode<ParamDecl>(
-        param,
+        param, Accessibility::Private,
         /*IsLet*/ true, SourceLoc(), SourceLoc(), name,
         importSourceLoc(param->getLocation()), bodyName, swiftParamTy,
         ImportedHeaderUnit);
@@ -2034,8 +2084,8 @@ DefaultArgumentKind ClangImporter::Implementation::inferDefaultArgument(
       }
     }
 
-  // NSDictionary arguments default to [:] if "options", "attributes",
-  // or "userInfo" occur in the argument label or (if there is no
+  // NSDictionary arguments default to [:] (or nil, if nullable) if "options",
+  // "attributes", or "userInfo" occur in the argument label or (if there is no
   // argument label) at the end of the base name.
   if (auto objcPtrTy = type->getAs<clang::ObjCObjectPointerType>()) {
     if (auto objcClass = objcPtrTy->getInterfaceDecl()) {
@@ -2044,13 +2094,17 @@ DefaultArgumentKind ClangImporter::Implementation::inferDefaultArgument(
         if (searchStr.empty() && !baseName.empty())
           searchStr = baseName.str();
 
+        auto emptyDictionaryKind = DefaultArgumentKind::EmptyDictionary;
+        if (clangOptionality == OTK_Optional)
+          emptyDictionaryKind = DefaultArgumentKind::Nil;
+
         bool sawInfo = false;
         for (auto word : reversed(camel_case::getWords(searchStr))) {
           if (camel_case::sameWordIgnoreFirstCase(word, "options"))
-            return DefaultArgumentKind::EmptyDictionary;
+            return emptyDictionaryKind;
 
           if (camel_case::sameWordIgnoreFirstCase(word, "attributes"))
-            return DefaultArgumentKind::EmptyDictionary;
+            return emptyDictionaryKind;
 
           if (camel_case::sameWordIgnoreFirstCase(word, "info")) {
             sawInfo = true;
@@ -2058,7 +2112,7 @@ DefaultArgumentKind ClangImporter::Implementation::inferDefaultArgument(
           }
 
           if (sawInfo && camel_case::sameWordIgnoreFirstCase(word, "user"))
-            return DefaultArgumentKind::EmptyDictionary;
+            return emptyDictionaryKind;
 
           if (argumentLabel.empty())
             break;
@@ -2152,9 +2206,7 @@ Type ClangImporter::Implementation::importMethodType(
   //     returning CF types as a workaround for ARC not managing CF
   //     objects
   ImportTypeKind resultKind;
-  if (kind == SpecialMethodKind::PropertyAccessor)
-    resultKind = ImportTypeKind::PropertyAccessor;
-  else if (isObjCMethodResultAudited(clangDecl))
+  if (isObjCMethodResultAudited(clangDecl))
     resultKind = ImportTypeKind::AuditedResult;
   else
     resultKind = ImportTypeKind::Result;
@@ -2221,7 +2273,14 @@ Type ClangImporter::Implementation::importMethodType(
                                OptionalityOfReturn);
     // Adjust the result type for a throwing function.
     if (swiftResultTy && errorInfo) {
-      origSwiftResultTy = swiftResultTy->getCanonicalType();
+
+      // Get the original unbridged result type.
+      origSwiftResultTy = importType(resultType, resultKind,
+                                 allowNSUIntegerAsIntInResult,
+                                 /*isFullyBridgeable*/false,
+                                 OptionalityOfReturn)
+                              ->getCanonicalType();
+
       swiftResultTy = adjustResultTypeForThrowingFunction(*errorInfo,
                                                           swiftResultTy);
     }
@@ -2314,12 +2373,6 @@ Type ClangImporter::Implementation::importMethodType(
       swiftParamTy = getOptionalType(getNSCopyingType(),
                                      ImportTypeKind::Parameter,
                                      optionalityOfParam);
-    } else if (kind == SpecialMethodKind::PropertyAccessor) {
-      swiftParamTy = importType(paramTy,
-                                ImportTypeKind::PropertyAccessor,
-                                allowNSUIntegerAsIntInParam,
-                                /*isFullyBridgeable*/true,
-                                optionalityOfParam);
     } else {
       ImportTypeKind importKind = ImportTypeKind::Parameter;
       if (param->hasAttr<clang::CFReturnsRetainedAttr>())
@@ -2374,7 +2427,8 @@ Type ClangImporter::Implementation::importMethodType(
 
     // Set up the parameter info.
     auto paramInfo
-      = createDeclWithClangNode<ParamDecl>(param, /*IsLet*/ true,
+      = createDeclWithClangNode<ParamDecl>(param, Accessibility::Private,
+                                           /*IsLet*/ true,
                                            SourceLoc(), SourceLoc(), name,
                                            importSourceLoc(param->getLocation()),
                                            bodyName, swiftParamTy,
@@ -2624,6 +2678,7 @@ bool ClangImporter::Implementation::matchesNSObjectBound(Type type) {
     return true;
 
   // Struct or enum type must have been bridged.
+  // TODO: Check that the bridged type is Hashable?
   if (type->getStructOrBoundGenericStruct() ||
       type->getEnumOrBoundGenericEnum())
     return true;

@@ -1135,6 +1135,19 @@ SILLinkage LinkEntity::getLinkage(IRGenModule &IGM,
       
   case Kind::SILGlobalVariable:
     return getSILGlobalVariable()->getLinkage();
+
+  case Kind::ReflectionBuiltinDescriptor:
+  case Kind::ReflectionFieldDescriptor:
+    // Reflection descriptors for imported types have shared linkage,
+    // since we may emit them in other TUs in the same module.
+    if (getTypeLinkage(getType()) == FormalLinkage::PublicNonUnique)
+      return SILLinkage::Shared;
+    return SILLinkage::Private;
+  case Kind::ReflectionAssociatedTypeDescriptor:
+    if (getConformanceLinkage(IGM, getProtocolConformance())
+          == SILLinkage::Shared)
+      return SILLinkage::Shared;
+    return SILLinkage::Private;
   }
   llvm_unreachable("bad link entity kind");
 }
@@ -1198,6 +1211,9 @@ bool LinkEntity::isAvailableExternally(IRGenModule &IGM) const {
   case Kind::GenericProtocolWitnessTableInstantiationFunction:
   case Kind::SILFunction:
   case Kind::SILGlobalVariable:
+  case Kind::ReflectionBuiltinDescriptor:
+  case Kind::ReflectionFieldDescriptor:
+  case Kind::ReflectionAssociatedTypeDescriptor:
     llvm_unreachable("Relative reference to unsupported link entity");
   }
   llvm_unreachable("bad link entity kind");
@@ -1556,6 +1572,7 @@ void IRGenModule::emitGlobalDecl(Decl *D) {
   case DeclKind::InfixOperator:
   case DeclKind::PrefixOperator:
   case DeclKind::PostfixOperator:
+  case DeclKind::PrecedenceGroup:
     return;
 
   case DeclKind::Module:
@@ -1999,7 +2016,7 @@ getTypeEntityInfo(IRGenModule &IGM, CanType conformingType) {
 
   auto nom = conformingType->getAnyNominal();
   auto clas = dyn_cast<ClassDecl>(nom);
-  if (nom->isGenericContext() ||
+  if ((nom->isGenericContext() && (!clas || !clas->usesObjCGenericsModel())) ||
       (clas && doesClassMetadataRequireDynamicInitialization(IGM, clas))) {
     // Conformances for generics and concrete subclasses of generics
     // are represented by referencing the nominal type descriptor.
@@ -2151,7 +2168,7 @@ llvm::Constant *IRGenModule::emitProtocolConformances() {
                   LinkEntity::forProtocolDescriptor(conformance->getProtocol()),
                   getPointerAlignment(), ProtocolDescriptorStructTy);
     auto typeEntity = getTypeEntityInfo(*this,
-                                        conformance->getType()->getCanonicalType());
+                                    conformance->getType()->getCanonicalType());
     auto flags = typeEntity.flags
         .withConformanceKind(ProtocolConformanceReferenceKind::WitnessTable);
 
@@ -2787,6 +2804,7 @@ void IRGenModule::emitNestedTypeDecls(DeclRange members) {
     case DeclKind::PostfixOperator:
     case DeclKind::Param:
     case DeclKind::Module:
+    case DeclKind::PrecedenceGroup:
       llvm_unreachable("decl not allowed in type context");
 
     case DeclKind::IfConfig:
@@ -2974,7 +2992,7 @@ bool IRGenModule::isResilient(NominalTypeDecl *D, ResilienceExpansion expansion)
 ResilienceExpansion
 IRGenModule::getResilienceExpansionForAccess(NominalTypeDecl *decl) {
   if (decl->getModuleContext() == getSwiftModule() &&
-      decl->getEffectiveAccess() != Accessibility::Public)
+      decl->getEffectiveAccess() < Accessibility::Public)
     return ResilienceExpansion::Maximal;
   return ResilienceExpansion::Minimal;
 }

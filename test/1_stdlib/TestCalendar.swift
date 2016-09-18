@@ -255,6 +255,36 @@ class TestCalendar : TestCalendarSuper {
             expectFalse(c.date(d, matchesComponents: DateComponents(month: 7, day: 31)))
         }
     }
+
+    func test_AnyHashableContainingCalendar() {
+        let values: [Calendar] = [
+            Calendar(identifier: .gregorian),
+            Calendar(identifier: .japanese),
+            Calendar(identifier: .japanese)
+        ]
+        let anyHashables = values.map(AnyHashable.init)
+        expectEqual(Calendar.self, type(of: anyHashables[0].base))
+        expectEqual(Calendar.self, type(of: anyHashables[1].base))
+        expectEqual(Calendar.self, type(of: anyHashables[2].base))
+        expectNotEqual(anyHashables[0], anyHashables[1])
+        expectEqual(anyHashables[1], anyHashables[2])
+    }
+
+    func test_AnyHashableCreatedFromNSCalendar() {
+        if #available(iOS 8.0, *) {
+            let values: [NSCalendar] = [
+                NSCalendar(identifier: .gregorian)!,
+                NSCalendar(identifier: .japanese)!,
+                NSCalendar(identifier: .japanese)!,
+            ]
+            let anyHashables = values.map(AnyHashable.init)
+            expectEqual(Calendar.self, type(of: anyHashables[0].base))
+            expectEqual(Calendar.self, type(of: anyHashables[1].base))
+            expectEqual(Calendar.self, type(of: anyHashables[2].base))
+            expectNotEqual(anyHashables[0], anyHashables[1])
+            expectEqual(anyHashables[1], anyHashables[2])
+        }
+    }
 }
 
 #if !FOUNDATION_XCTEST
@@ -263,5 +293,7 @@ CalendarTests.test("test_copyOnWrite") { TestCalendar().test_copyOnWrite() }
 CalendarTests.test("test_bridgingAutoupdating") { TestCalendar().test_bridgingAutoupdating() }
 CalendarTests.test("test_equality") { TestCalendar().test_equality() }
 CalendarTests.test("test_properties") { TestCalendar().test_properties() }
+CalendarTests.test("test_AnyHashableContainingCalendar") { TestCalendar().test_AnyHashableContainingCalendar() }
+CalendarTests.test("test_AnyHashableCreatedFromNSCalendar") { TestCalendar().test_AnyHashableCreatedFromNSCalendar() }
 runAllTests()
 #endif

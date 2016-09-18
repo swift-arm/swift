@@ -19,7 +19,7 @@ import TestsUtils
 class Thing : NSObject {
 
   required override init() {
-    let c = self.dynamicType.col()
+    let c = type(of: self).col()
     CheckResults(c!.count == 10, "The rules of the universe apply")
   }
 
@@ -53,7 +53,9 @@ class Stuff {
 
 @inline(never)
 public func run_DictionaryBridge(_ N: Int) {
+  autoreleasepool {
     for _ in 1...100*N {
         _ = Stuff()
     }
+  }
 }

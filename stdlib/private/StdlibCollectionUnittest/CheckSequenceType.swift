@@ -103,7 +103,7 @@ public struct FilterTest {
   public init(
     _ expected: [Int],
     _ sequence: [Int],
-    _ includeElement: (Int) -> Bool,
+    _ includeElement: @escaping (Int) -> Bool,
     file: String = #file, line: UInt = #line
   ) {
     self.expected = expected
@@ -145,7 +145,7 @@ public struct FlatMapTest {
   public init(
     expected: [Int32],
     sequence: [Int],
-    transform: (Int) -> [Int32],
+    transform: @escaping (Int) -> [Int32],
     file: String = #file, line: UInt = #line
   ) {
     self.expected = expected
@@ -164,7 +164,7 @@ public struct FlatMapToOptionalTest {
   public init(
     _ expected: [Int32],
     _ sequence: [Int],
-    _ transform: (Int) -> Int32?,
+    _ transform: @escaping (Int) -> Int32?,
     file: String = #file, line: UInt = #line
   ) {
     self.expected = expected
@@ -230,7 +230,7 @@ public struct MapTest {
   public init(
     _ expected: [Int32],
     _ sequence: [Int],
-    _ transform: (Int) -> Int32,
+    _ transform: @escaping (Int) -> Int32,
     file: String = #file, line: UInt = #line
   ) {
     self.expected = expected
@@ -1452,13 +1452,13 @@ extension TestSuite {
     SequenceWithEquatableElement : Sequence
   >(
     _ testNamePrefix: String = "",
-    makeSequence: ([S.Iterator.Element]) -> S,
-    wrapValue: (OpaqueValue<Int>) -> S.Iterator.Element,
-    extractValue: (S.Iterator.Element) -> OpaqueValue<Int>,
+    makeSequence: @escaping ([S.Iterator.Element]) -> S,
+    wrapValue: @escaping (OpaqueValue<Int>) -> S.Iterator.Element,
+    extractValue: @escaping (S.Iterator.Element) -> OpaqueValue<Int>,
 
-    makeSequenceOfEquatable: ([SequenceWithEquatableElement.Iterator.Element]) -> SequenceWithEquatableElement,
-    wrapValueIntoEquatable: (MinimalEquatableValue) -> SequenceWithEquatableElement.Iterator.Element,
-    extractValueFromEquatable: ((SequenceWithEquatableElement.Iterator.Element) -> MinimalEquatableValue),
+    makeSequenceOfEquatable: @escaping ([SequenceWithEquatableElement.Iterator.Element]) -> SequenceWithEquatableElement,
+    wrapValueIntoEquatable: @escaping (MinimalEquatableValue) -> SequenceWithEquatableElement.Iterator.Element,
+    extractValueFromEquatable: @escaping ((SequenceWithEquatableElement.Iterator.Element) -> MinimalEquatableValue),
 
     resiliencyChecks: CollectionMisuseResiliencyChecks = .all
   ) where
@@ -1469,10 +1469,11 @@ extension TestSuite {
 
     var testNamePrefix = testNamePrefix
 
-    if checksAdded.contains(#function) {
+    if !checksAdded.insert(
+        "\(testNamePrefix).\(S.self).\(#function)"
+      ).inserted {
       return
     }
-    checksAdded.insert(#function)
 
     func makeWrappedSequence(_ elements: [OpaqueValue<Int>]) -> S {
       return makeSequence(elements.map(wrapValue))
@@ -1484,7 +1485,7 @@ extension TestSuite {
       return makeSequenceOfEquatable(elements.map(wrapValueIntoEquatable))
     }
 
-    testNamePrefix += String(S.Type.self)
+    testNamePrefix += String(describing: S.Type.self)
 
     let isMultiPass = makeSequence([])
       ._preprocessingPass { true } ?? false
@@ -1789,9 +1790,9 @@ self.test("\(testNamePrefix).first/semantics") {
       test.expected == nil ? nil : wrapValueIntoEquatable(test.element),
       found,
       stackTrace: SourceLocStack().with(test.loc))
-    if test.expected != nil {
+    if let expectedIdentity = test.expected {
       expectEqual(
-        test.expected, (found as? MinimalEquatableValue)?.identity,
+        test.expected, extractValueFromEquatable(found!).identity,
         "find() should find only the first element matching its predicate")
     }
   }

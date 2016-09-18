@@ -366,7 +366,8 @@ public:
     Expr *AtExprEnd = End.getAsExpr();
     if (AtExprEnd && (isa<ClosureExpr>(AtExprEnd) ||
                       isa<ParenExpr>(AtExprEnd) ||
-                      isa<TupleExpr>(AtExprEnd))) {
+                      isa<TupleExpr>(AtExprEnd) ||
+                      isa<CaptureListExpr>(AtExprEnd))) {
 
       if (auto *Paren = dyn_cast_or_null<ParenExpr>(Cursor->getAsExpr())) {
         auto *SubExpr = Paren->getSubExpr();
@@ -390,6 +391,22 @@ public:
             Elements[1]->getKind() == ExprKind::Assign &&
             SM.getLineAndColumn(Elements[2]->getEndLoc()).first == Line) {
               return false;
+        }
+      }
+    }
+
+    //  let msg = String([65, 108, 105, 103, 110].map { c in
+    //    Character(UnicodeScalar(c))
+    //  }) <--- No indentation here.
+    auto AtCursorExpr = Cursor->getAsExpr();
+    if (AtCursorExpr && (isa<ParenExpr>(AtCursorExpr) ||
+                         isa<TupleExpr>(AtCursorExpr))) {
+      if (AtExprEnd && isa<CallExpr>(AtExprEnd)) {
+        if (AtExprEnd->getEndLoc().isValid() &&
+            AtCursorExpr->getEndLoc().isValid() &&
+            Line == SM.getLineNumber(AtExprEnd->getEndLoc()) &&
+            Line == SM.getLineNumber(AtCursorExpr->getEndLoc())) {
+          return false;
         }
       }
     }

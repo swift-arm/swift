@@ -46,7 +46,7 @@ public struct LazyFilterIterator<
   /// for which `isIncluded(x) == true`.
   internal init(
     _base: Base,
-    _ isIncluded: (Base.Element) -> Bool
+    _ isIncluded: @escaping (Base.Element) -> Bool
   ) {
     self._base = _base
     self._predicate = isIncluded
@@ -83,7 +83,7 @@ public struct LazyFilterSequence<Base : Sequence>
   public // @testable
   init(
     _base base: Base,
-    _ isIncluded: (Base.Iterator.Element) -> Bool
+    _ isIncluded: @escaping (Base.Iterator.Element) -> Bool
   ) {
     self.base = base
     self._include = isIncluded
@@ -187,12 +187,12 @@ public struct ${Self}<
 
   public typealias IndexDistance = Base.IndexDistance
 
-  /// Construct an instance containing the elements of `base` that
+  /// Creates an instance containing the elements of `base` that
   /// satisfy `isIncluded`.
   public // @testable
   init(
     _base: Base,
-    _ isIncluded: (Base.Iterator.Element) -> Bool
+    _ isIncluded: @escaping (Base.Iterator.Element) -> Bool
   ) {
     self._base = _base
     self._predicate = isIncluded
@@ -202,7 +202,7 @@ public struct ${Self}<
   ///
   /// In an empty collection, `startIndex == endIndex`.
   ///
-  /// - Complexity: O(N), where N is the ratio between unfiltered and
+  /// - Complexity: O(*n*), where *n* is the ratio between unfiltered and
   ///   filtered collection counts.
   public var startIndex: Index {
     var index = _base.startIndex
@@ -256,7 +256,7 @@ public struct ${Self}<
   }
 %   end
 
-  /// Access the element at `position`.
+  /// Accesses the element at `position`.
   ///
   /// - Precondition: `position` is a valid position in `self` and
   /// `position != endIndex`.
@@ -300,7 +300,7 @@ extension LazySequenceProtocol {
   ///   traversal step invokes `predicate` on one or more underlying
   ///   elements.
   public func filter(
-    _ isIncluded: (Elements.Iterator.Element) -> Bool
+    _ isIncluded: @escaping (Elements.Iterator.Element) -> Bool
   ) -> LazyFilterSequence<Self.Elements> {
     return LazyFilterSequence(
       _base: self.elements, isIncluded)
@@ -321,7 +321,7 @@ extension LazyCollectionProtocol
   ///   traversal step invokes `predicate` on one or more underlying
   ///   elements.
   public func filter(
-    _ isIncluded: (Elements.Iterator.Element) -> Bool
+    _ isIncluded: @escaping (Elements.Iterator.Element) -> Bool
   ) -> LazyFilter${collectionForTraversal(Traversal)}<Self.Elements> {
     return LazyFilter${collectionForTraversal(Traversal)}(
       _base: self.elements, isIncluded)

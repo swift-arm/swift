@@ -466,7 +466,7 @@ void CodeCompletionString::print(raw_ostream &OS) const {
     case ChunkKind::CallParameterName:
     case ChunkKind::CallParameterInternalName:
     case ChunkKind::CallParameterColon:
-    case ChunkKind::DeclAttrParamEqual:
+    case ChunkKind::DeclAttrParamColon:
     case ChunkKind::CallParameterType:
     case ChunkKind::CallParameterClosureType:
     case ChunkKind::GenericParameterName:
@@ -592,6 +592,8 @@ CodeCompletionResult::getCodeCompletionDeclKind(const Decl *D) {
     return CodeCompletionDeclKind::PrefixOperatorFunction;
   case DeclKind::PostfixOperator:
     return CodeCompletionDeclKind::PostfixOperatorFunction;
+  case DeclKind::PrecedenceGroup:
+    return CodeCompletionDeclKind::PrecedenceGroup;
   case DeclKind::EnumElement:
     return CodeCompletionDeclKind::EnumElement;
   case DeclKind::Subscript:
@@ -671,6 +673,9 @@ void CodeCompletionResult::print(raw_ostream &OS) const {
       break;
     case CodeCompletionDeclKind::Module:
       Prefix.append("[Module]");
+      break;
+    case CodeCompletionDeclKind::PrecedenceGroup:
+      Prefix.append("[PrecedenceGroup]");
       break;
     }
     break;
@@ -1143,7 +1148,7 @@ Optional<unsigned> CodeCompletionString::getFirstTextChunkIndex(
     case ChunkKind::RethrowsKeyword:
     case ChunkKind::DeclIntroducer:
     case ChunkKind::CallParameterColon:
-    case ChunkKind::DeclAttrParamEqual:
+    case ChunkKind::DeclAttrParamColon:
     case ChunkKind::CallParameterType:
     case ChunkKind::CallParameterClosureType:
     case ChunkKind::OptionalBegin:
@@ -1180,7 +1185,7 @@ void CodeCompletionString::getName(raw_ostream &OS) const {
       switch (C.getKind()) {
       case ChunkKind::TypeAnnotation:
       case ChunkKind::CallParameterClosureType:
-      case ChunkKind::DeclAttrParamEqual:
+      case ChunkKind::DeclAttrParamColon:
         continue;
       case ChunkKind::ThrowsKeyword:
       case ChunkKind::RethrowsKeyword:
@@ -1650,6 +1655,7 @@ class CompletionLookup final : public swift::VisibleDeclConsumer {
       DeducedAssociatedTypeCache;
 
   Optional<SemanticContextKind> ForcedSemanticContext = None;
+  bool IsUnresolvedMember = false;
 
   std::unique_ptr<ArchetypeTransformer> TransformerPt = nullptr;
 
@@ -1879,6 +1885,12 @@ public:
                                          DeclVisibilityKind Reason) {
     if (ForcedSemanticContext)
       return *ForcedSemanticContext;
+
+    if (IsUnresolvedMember) {
+      if (isa<EnumElementDecl>(D)) {
+        return SemanticContextKind::ExpressionSpecific;
+      }
+    }
 
     switch (Reason) {
     case DeclVisibilityKind::LocalVariable:
@@ -2213,8 +2225,9 @@ public:
           Builder.addComma();
         if (BodyParams) {
           // If we have a local name for the parameter, pass in that as well.
-          auto name = BodyParams->get(i)->getName();
-          Builder.addCallParameter(Name, name, ParamType, TupleElt.isVararg(),
+          auto argName = BodyParams->get(i)->getArgumentName();
+          auto bodyName = BodyParams->get(i)->getName();
+          Builder.addCallParameter(argName, bodyName, ParamType, TupleElt.isVararg(),
                                    true);
         } else {
           Builder.addCallParameter(Name, ParamType, TupleElt.isVararg(), true);
@@ -2232,8 +2245,9 @@ public:
 
       modifiedBuilder = true;
       if (BodyParams) {
-        auto name = BodyParams->get(0)->getName();
-        Builder.addCallParameter(Identifier(), name, T,
+        auto argName = BodyParams->get(0)->getArgumentName();
+        auto bodyName = BodyParams->get(0)->getName();
+        Builder.addCallParameter(argName, bodyName, T,
                                  /*IsVarArg*/false, true);
       } else
         Builder.addCallParameter(Identifier(), T, /*IsVarArg*/false, true);
@@ -2307,7 +2321,10 @@ public:
 
   void addFunctionCallPattern(const AnyFunctionType *AFT,
                               const AbstractFunctionDecl *AFD = nullptr) {
-    foundFunction(AFT);
+    if (AFD)
+      foundFunction(AFD);
+    else
+      foundFunction(AFT);
 
     // Add the pattern, possibly including any default arguments.
     auto addPattern = [&](bool includeDefaultArgs = true) {
@@ -2997,20 +3014,6 @@ public:
     return false;
   }
 
-  void handleOptionSet(Decl *D, DeclVisibilityKind Reason) {
-    if (auto *NTD = dyn_cast<NominalTypeDecl>(D)) {
-      if (isOptionSetDecl(NTD)) {
-        for (auto M : NTD->getMembers()) {
-          if (auto *VD = dyn_cast<VarDecl>(M)) {
-            if (isOptionSet(VD->getType()) && VD->isStatic()) {
-              addVarDeclRef(VD, Reason);
-            }
-          }
-        }
-      }
-    }
-  }
-
   bool isOptionSetDecl(NominalTypeDecl *D) {
     auto optionSetType = dyn_cast<ProtocolDecl>(Ctx.getOptionSetDecl());
     if (!optionSetType)
@@ -3654,13 +3657,8 @@ public:
         unboxType(FT->getInput());
         unboxType(FT->getResult());
       } else if (auto NTD = T->getNominalOrBoundGenericNominal()){
-        if (HandledDecls.count(NTD) == 0) {
-          auto Reason = DeclVisibilityKind::MemberOfCurrentNominal;
-          if (!Lookup.handleEnumElement(NTD, Reason)) {
-            Lookup.handleOptionSet(NTD, Reason);
-          }
-          HandledDecls.insert(NTD);
-        }
+        if (HandledDecls.insert(NTD).second)
+          Lookup.getUnresolvedMemberCompletions(T);
       }
     }
 
@@ -3694,20 +3692,39 @@ public:
     }
   };
 
-  void getUnresolvedMemberCompletions(SourceLoc Loc, SmallVectorImpl<Type> &Types) {
+  void getUnresolvedMemberCompletions(ArrayRef<Type> Types) {
     NeedLeadingDot = !HaveDot;
     for (auto T : Types) {
       if (T && T->getNominalOrBoundGenericNominal()) {
-        auto Reason = DeclVisibilityKind::MemberOfCurrentNominal;
-        if (!handleEnumElement(T->getNominalOrBoundGenericNominal(), Reason)) {
-          handleOptionSet(T->getNominalOrBoundGenericNominal(), Reason);
-        }
+        // We can only say .foo where foo is a static member of the contextual
+        // type and has the same type (or if the member is a function, then the
+        // same result type) as the contextual type.
+        auto contextCanT = T->getCanonicalType();
+        FilteredDeclConsumer consumer(*this, [=](ValueDecl *VD, DeclVisibilityKind reason) {
+          if (!VD->hasType()) {
+            TypeResolver->resolveDeclSignature(VD);
+            if (!VD->hasType())
+              return false;
+          }
+
+          auto T = VD->getType();
+          while (auto FT = T->getAs<AnyFunctionType>())
+            T = FT->getResult();
+          return T->getCanonicalType() == contextCanT;
+        });
+
+        auto baseType = MetatypeType::get(T);
+        llvm::SaveAndRestore<LookupKind> SaveLook(Kind, LookupKind::ValueExpr);
+        llvm::SaveAndRestore<Type> SaveType(ExprType, baseType);
+        llvm::SaveAndRestore<bool> SaveUnresolved(IsUnresolvedMember, true);
+        lookupVisibleMemberDecls(consumer, baseType, CurrDeclContext,
+                                 TypeResolver.get(),
+                                 /*includeInstanceMembers=*/false);
       }
     }
   }
 
-  void getUnresolvedMemberCompletions(SourceLoc Loc,
-                                      std::vector<std::string> &FuncNames,
+  void getUnresolvedMemberCompletions(std::vector<std::string> &FuncNames,
                                       bool HasReturn) {
     NeedLeadingDot = !HaveDot;
     LookupByName Lookup(*this, FuncNames);
@@ -4063,7 +4080,7 @@ public:
         Options.setArchetypeSelfTransform(transformType, VD->getDeclContext());
       Options.PrintDefaultParameterPlaceholder = false;
       Options.PrintImplicitAttrs = false;
-      Options.SkipAttributes = true;
+      Options.ExclusiveAttrList.push_back(TAK_escaping);
       Options.PrintOverrideKeyword = false;
       Options.PrintPropertyAccessors = false;
       VD->print(Printer, Options);
@@ -4656,7 +4673,7 @@ static void addExprKeywords(CodeCompletionResultSink &Sink) {
   // Same: Swift.IntegerLiteralType.
   AddKeyword("#line", "Int", CodeCompletionKeywordKind::pound_line);
   AddKeyword("#column", "Int", CodeCompletionKeywordKind::pound_column);
-  AddKeyword("#dsohandle", "UnsafeMutablePointer<Void>", CodeCompletionKeywordKind::pound_dsohandle);
+  AddKeyword("#dsohandle", "UnsafeMutableRawPointer", CodeCompletionKeywordKind::pound_dsohandle);
 }
 
 static void addAnyTypeKeyword(CodeCompletionResultSink &Sink) {
@@ -5181,12 +5198,10 @@ void CodeCompletionCallbacksImpl::doneParsing() {
       eraseErrorTypes(PE);
       Success = typeCheckUnresolvedExpr(*CurDeclContext, UnresolvedExpr, PE,
                                         PossibleTypes);
-      Lookup.getUnresolvedMemberCompletions(
-        P.Context.SourceMgr.getCodeCompletionLoc(), PossibleTypes);
+      Lookup.getUnresolvedMemberCompletions(PossibleTypes);
     }
     if (!Success) {
       Lookup.getUnresolvedMemberCompletions(
-        P.Context.SourceMgr.getCodeCompletionLoc(),
         TokensBeforeUnresolvedExpr,
         UnresolvedExprInReturn);
     }
@@ -5398,6 +5413,7 @@ void swift::ide::copyCodeCompletionResults(CodeCompletionResultSink &targetSink,
       if (R->getKind() != CodeCompletionResult::Declaration)
         return false;
       switch(R->getAssociatedDeclKind()) {
+      case CodeCompletionDeclKind::PrecedenceGroup:
       case CodeCompletionDeclKind::Module:
       case CodeCompletionDeclKind::Class:
       case CodeCompletionDeclKind::Struct:

@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 @_exported import Foundation // Clang module
+import CoreFoundation
 
 private func _utfRangeToNSRange(_ inRange : Range<UnicodeScalar>) -> NSRange {
     return NSMakeRange(Int(inRange.lowerBound.value), Int(inRange.upperBound.value - inRange.lowerBound.value))
@@ -82,7 +83,7 @@ public struct CharacterSet : ReferenceConvertible, Equatable, Hashable, SetAlgeb
     
     // MARK: Init methods
     
-    private init(_bridged characterSet: NSCharacterSet) {
+    fileprivate init(_bridged characterSet: NSCharacterSet) {
         // We must copy the input because it might be mutable; just like storing a value type in ObjC
         _wrapped = _SwiftNSCharacterSet(immutableObject: characterSet.copy() as AnyObject)
     }
@@ -103,7 +104,7 @@ public struct CharacterSet : ReferenceConvertible, Equatable, Hashable, SetAlgeb
     ///
     /// It is the caller's responsibility to ensure that the values represent valid `UnicodeScalar` values, if that is what is desired.
     public init(charactersIn range: ClosedRange<UnicodeScalar>) {
-        let halfOpenRange = range.lowerBound..<UnicodeScalar(range.upperBound.value + 1)
+        let halfOpenRange = range.lowerBound..<UnicodeScalar(range.upperBound.value + 1)!
         _wrapped = _SwiftNSCharacterSet(immutableObject: NSCharacterSet(range: _utfRangeToNSRange(halfOpenRange)))
     }
 
@@ -207,9 +208,14 @@ public struct CharacterSet : ReferenceConvertible, Equatable, Hashable, SetAlgeb
         return CharacterSet(reference: NSCharacterSet.illegalCharacters as NSCharacterSet)
     }
     
-    /// Returns a character set containing the characters in Unicode General Category P*.
+    @available(*, unavailable, renamed: "punctuationCharacters")
     public static var punctuation : CharacterSet {
-        return CharacterSet(reference: NSCharacterSet.punctuation as NSCharacterSet)
+        return CharacterSet(reference: NSCharacterSet.punctuationCharacters as NSCharacterSet)
+    }
+
+    /// Returns a character set containing the characters in Unicode General Category P*.
+    public static var punctuationCharacters : CharacterSet {
+        return CharacterSet(reference: NSCharacterSet.punctuationCharacters as NSCharacterSet)
     }
     
     /// Returns a character set containing the characters in Unicode General Category Lt.
@@ -294,7 +300,7 @@ public struct CharacterSet : ReferenceConvertible, Equatable, Hashable, SetAlgeb
     ///
     /// It is the caller's responsibility to ensure that the values represent valid `UnicodeScalar` values, if that is what is desired.
     public mutating func insert(charactersIn range: ClosedRange<UnicodeScalar>) {
-        let halfOpenRange = range.lowerBound..<UnicodeScalar(range.upperBound.value + 1)
+        let halfOpenRange = range.lowerBound..<UnicodeScalar(range.upperBound.value + 1)!
         let nsRange = _utfRangeToNSRange(halfOpenRange)
         _applyUnmanagedMutation {
             $0.addCharacters(in: nsRange)
@@ -311,7 +317,7 @@ public struct CharacterSet : ReferenceConvertible, Equatable, Hashable, SetAlgeb
 
     /// Remove a closed range of integer values from the `CharacterSet`.
     public mutating func remove(charactersIn range: ClosedRange<UnicodeScalar>) {
-        let halfOpenRange = range.lowerBound..<UnicodeScalar(range.upperBound.value + 1)
+        let halfOpenRange = range.lowerBound..<UnicodeScalar(range.upperBound.value + 1)!
         let nsRange = _utfRangeToNSRange(halfOpenRange)
         _applyUnmanagedMutation {
             $0.removeCharacters(in: nsRange)
@@ -463,6 +469,14 @@ extension CharacterSet : _ObjectiveCBridgeable {
     
 }
 
+extension NSCharacterSet : _HasCustomAnyHashableRepresentation {
+    // Must be @nonobjc to avoid infinite recursion during bridging.
+    @nonobjc
+    public func _toCustomAnyHashable() -> AnyHashable? {
+        return AnyHashable(self as CharacterSet)
+    }
+}
+
 extension _SwiftNSCharacterSet {
     
     // Stubs
@@ -470,28 +484,37 @@ extension _SwiftNSCharacterSet {
     
     // Immutable
     
+    @objc(bitmapRepresentation)
     var bitmapRepresentation: Data {
         return _mapUnmanaged { $0.bitmapRepresentation }
     }
     
+    @objc(invertedSet)
     var inverted : CharacterSet {
         return _mapUnmanaged { $0.inverted }
     }
     
+    @objc(hasMemberInPlane:)
     func hasMember(inPlane plane: UInt8) -> Bool {
         return _mapUnmanaged {$0.hasMemberInPlane(plane) }
     }
     
+    @objc(characterIsMember:)
     func characterIsMember(_ member: unichar) -> Bool {
         return _mapUnmanaged { $0.characterIsMember(member) }
     }
     
+    @objc(longCharacterIsMember:)
     func longCharacterIsMember(_ member: UTF32Char) -> Bool {
         return _mapUnmanaged { $0.longCharacterIsMember(member) }
     }
     
+    @objc(isSupersetOfSet:)
     func isSuperset(of other: CharacterSet) -> Bool {
-        return _mapUnmanaged { $0.isSuperset(of: other) }
+        return _mapUnmanaged {
+            // this is a work around for <rdar://problem/27768939>
+            return CFCharacterSetIsSupersetOfSet($0 as CFCharacterSet, (other as NSCharacterSet).copy() as! CFCharacterSet)
+        }
     }
     
 }

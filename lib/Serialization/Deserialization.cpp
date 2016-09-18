@@ -1023,6 +1023,13 @@ static void filterValues(Type expectedTy, Module *expectedModule,
           ->getCanonicalSignature() != expectedGenericSig)
       return true;
 
+    // If we don't expect a specific generic signature, ignore anything from a
+    // constrained extension.
+    if (!expectedGenericSig &&
+        isa<ExtensionDecl>(value->getDeclContext()) &&
+        cast<ExtensionDecl>(value->getDeclContext())->isConstrainedExtension())
+      return true;
+
     // If we're looking at members of a protocol or protocol extension,
     // filter by whether we expect to find something in a protocol extension or
     // not. This lets us distinguish between a protocol member and a protocol
@@ -1100,13 +1107,12 @@ Decl *ModuleFile::resolveCrossReference(Module *M, uint32_t pathLen) {
     // has to go through this path, but it's an option we toggle for
     // testing.
     if (values.empty() && !retrying &&
-        getContext().LangOpts.StripNSPrefix &&
         (M->getName().str() == "ObjectiveC" ||
          M->getName().str() == "Foundation")) {
       if (name.str().startswith("NS")) {
         if (name.str().size() > 2 && name.str() != "NSCocoaError") {
           auto known = getKnownFoundationEntity(name.str());
-          if (!known || !nameConflictsWithStandardLibrary(*known)) {
+          if (!known) {
             name = getContext().getIdentifier(name.str().substr(2));
             retrying = true;
             goto retry;
@@ -1144,6 +1150,8 @@ Decl *ModuleFile::resolveCrossReference(Module *M, uint32_t pathLen) {
       return M->lookupPrefixOperator(opName);
     case OperatorKind::Postfix:
       return M->lookupPostfixOperator(opName);
+    case OperatorKind::PrecedenceGroup:
+      return M->lookupPrecedenceGroup(opName);
     default:
       // Unknown operator kind.
       error();
@@ -1357,6 +1365,8 @@ Decl *ModuleFile::resolveCrossReference(Module *M, uint32_t pathLen) {
           // Simple case: use the nominal type's generic parameters.
           paramList = nominal->getGenericParams();
         }
+      } else if (auto alias = dyn_cast<TypeAliasDecl>(base)) {
+        paramList = alias->getGenericParams();
       } else if (auto fn = dyn_cast<AbstractFunctionDecl>(base))
         paramList = fn->getGenericParams();
 
@@ -1658,6 +1668,7 @@ getActualAccessibility(uint8_t raw) {
   CASE(FilePrivate)
   CASE(Internal)
   CASE(Public)
+  CASE(Open)
 #undef CASE
   }
   return None;
@@ -2791,7 +2802,6 @@ Decl *ModuleFile::getDecl(DeclID DID, Optional<DeclContext *> ForcedContext) {
     auto DC = getDeclContext(contextID);
     declOrOffset = createDecl<PrefixOperatorDecl>(DC, SourceLoc(),
                                                   getIdentifier(nameID),
-                                                  SourceLoc(), SourceLoc(),
                                                   SourceLoc());
     break;
   }
@@ -2806,7 +2816,6 @@ Decl *ModuleFile::getDecl(DeclID DID, Optional<DeclContext *> ForcedContext) {
     auto DC = getDeclContext(contextID);
     declOrOffset = createDecl<PostfixOperatorDecl>(DC, SourceLoc(),
                                                    getIdentifier(nameID),
-                                                   SourceLoc(), SourceLoc(),
                                                    SourceLoc());
     break;
   }
@@ -2814,20 +2823,48 @@ Decl *ModuleFile::getDecl(DeclID DID, Optional<DeclContext *> ForcedContext) {
   case decls_block::INFIX_OPERATOR_DECL: {
     IdentifierID nameID;
     DeclContextID contextID;
-    uint8_t rawAssociativity;
-    unsigned precedence;
-    bool isAssignment;
-    bool isAssocImplicit;
-    bool isPrecedenceImplicit;
-    bool isAssignmentImplicit;
+    DeclID precedenceGroupID;
 
-    decls_block::InfixOperatorLayout::readRecord(scratch, nameID,
-                                                 contextID,
-                                                 rawAssociativity, precedence,
-                                                 isAssignment,
-                                                 isAssocImplicit,
-                                                 isPrecedenceImplicit,
-                                                 isAssignmentImplicit);
+    decls_block::InfixOperatorLayout::readRecord(scratch, nameID, contextID,
+                                                 precedenceGroupID);
+
+    PrecedenceGroupDecl *precedenceGroup = nullptr;
+    Identifier precedenceGroupName;
+    if (precedenceGroupID) {
+      precedenceGroup =
+        dyn_cast_or_null<PrecedenceGroupDecl>(getDecl(precedenceGroupID));
+      if (precedenceGroup) {
+        precedenceGroupName = precedenceGroup->getName();
+      }
+    }
+
+    auto DC = getDeclContext(contextID);
+
+    auto result = createDecl<InfixOperatorDecl>(DC, SourceLoc(),
+                                                 getIdentifier(nameID),
+                                                 SourceLoc(), SourceLoc(),
+                                                 precedenceGroupName,
+                                                 SourceLoc());
+    result->setPrecedenceGroup(precedenceGroup);
+
+    declOrOffset = result;
+    break;
+  }
+
+  case decls_block::PRECEDENCE_GROUP_DECL: {
+    IdentifierID nameID;
+    DeclContextID contextID;
+    uint8_t rawAssociativity;
+    bool assignment;
+    unsigned numHigherThan;
+    ArrayRef<uint64_t> rawRelations;
+
+    decls_block::PrecedenceGroupLayout::readRecord(scratch, nameID, contextID,
+                                                   rawAssociativity,
+                                                   assignment, numHigherThan,
+                                                   rawRelations);
+
+    auto DC = getDeclContext(contextID);
 
     auto associativity = getActualAssociativity(rawAssociativity);
     if (!associativity.hasValue()) {
@@ -2835,21 +2872,47 @@ Decl *ModuleFile::getDecl(DeclID DID, Optional<DeclContext *> ForcedContext) {
       return nullptr;
     }
 
-    InfixData infixData(precedence, associativity.getValue(),
-                        isAssignment);
+    if (numHigherThan > rawRelations.size()) {
+      error();
+      return nullptr;
+    }
 
-    auto DC = getDeclContext(contextID);
+    SmallVector<PrecedenceGroupDecl::Relation, 4> higherThan;
+    for (auto relID : rawRelations.slice(0, numHigherThan)) {
+      PrecedenceGroupDecl *rel = nullptr;
+      if (relID)
+        rel = dyn_cast_or_null<PrecedenceGroupDecl>(getDecl(relID));
+      if (!rel) {
+        error();
+        return nullptr;
+      }
 
-    declOrOffset = createDecl<InfixOperatorDecl>(DC, SourceLoc(),
-                                                 getIdentifier(nameID),
-                                                 SourceLoc(), SourceLoc(),
-                                                 isAssocImplicit,
-                                                 SourceLoc(), SourceLoc(),
-                                                 isPrecedenceImplicit,
-                                                 SourceLoc(), SourceLoc(),
-                                                 isAssignmentImplicit,
-                                                 SourceLoc(),
-                                                 SourceLoc(), infixData);
+      higherThan.push_back({SourceLoc(), rel->getName(), rel});
+    }
+
+    SmallVector<PrecedenceGroupDecl::Relation, 4> lowerThan;
+    for (auto relID : rawRelations.slice(numHigherThan)) {
+      PrecedenceGroupDecl *rel = nullptr;
+      if (relID)
+        rel = dyn_cast_or_null<PrecedenceGroupDecl>(getDecl(relID));
+      if (!rel) {
+        error();
+        return nullptr;
+      }
+
+      lowerThan.push_back({SourceLoc(), rel->getName(), rel});
+    }
+
+    declOrOffset = PrecedenceGroupDecl::create(DC, SourceLoc(), SourceLoc(),
+                                               getIdentifier(nameID),
+                                               SourceLoc(),
+                                               SourceLoc(), SourceLoc(),
+                                               *associativity,
+                                               SourceLoc(), SourceLoc(),
+                                               assignment,
+                                               SourceLoc(), higherThan,
+                                               SourceLoc(), lowerThan,
+                                               SourceLoc());
     break;
   }
 
@@ -3036,7 +3099,8 @@ Decl *ModuleFile::getDecl(DeclID DID, Optional<DeclContext *> ForcedContext) {
       elem->setInterfaceType(interfaceType);
     if (isImplicit)
       elem->setImplicit();
-    elem->setAccessibility(cast<EnumDecl>(DC)->getFormalAccess());
+    elem->setAccessibility(std::max(cast<EnumDecl>(DC)->getFormalAccess(),
+                                    Accessibility::Internal));
 
     break;
   }
@@ -3203,7 +3267,8 @@ Decl *ModuleFile::getDecl(DeclID DID, Optional<DeclContext *> ForcedContext) {
                                            /*selfpat*/nullptr, DC);
     declOrOffset = dtor;
 
-    dtor->setAccessibility(cast<ClassDecl>(DC)->getFormalAccess());
+    dtor->setAccessibility(std::max(cast<ClassDecl>(DC)->getFormalAccess(),
+                                    Accessibility::Internal));
     auto *selfParams = readParameterList();
     selfParams->get(0)->setImplicit();  // self is implicit.
 
@@ -3435,13 +3500,12 @@ Type ModuleFile::getType(TypeID TID) {
     TypeID inputID;
     TypeID resultID;
     uint8_t rawRepresentation;
-    bool autoClosure, noescape, explicitlyEscaping, throws;
+    bool autoClosure, noescape, throws;
 
     decls_block::FunctionTypeLayout::readRecord(scratch, inputID, resultID,
                                                 rawRepresentation,
                                                 autoClosure,
                                                 noescape,
-                                                explicitlyEscaping,
                                                 throws);
     auto representation = getActualFunctionTypeRepresentation(rawRepresentation);
     if (!representation.hasValue()) {
@@ -3451,7 +3515,7 @@ Type ModuleFile::getType(TypeID TID) {
     
     auto Info = FunctionType::ExtInfo(*representation,
                                autoClosure, noescape,
-                               explicitlyEscaping, throws);
+                               throws);
     
     typeOrOffset = FunctionType::get(getType(inputID), getType(resultID),
                                      Info);

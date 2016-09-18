@@ -60,10 +60,6 @@ struct BridgedValueType : _ObjectiveCBridgeable {
     return ClassA(value: value)
   }
 
-  static func _isBridgedToObjectiveC() -> Bool {
-    return true
-  }
-
   static func _forceBridgeFromObjectiveC(
     _ x: ClassA,
     result: inout BridgedValueType?
@@ -111,10 +107,6 @@ struct BridgedLargeValueType : _ObjectiveCBridgeable {
   func _bridgeToObjectiveC() -> ClassA {
     assert(value == value0)
     return ClassA(value: value0)
-  }
-
-  static func _isBridgedToObjectiveC() -> Bool {
-    return true
   }
 
   static func _forceBridgeFromObjectiveC(
@@ -321,13 +313,13 @@ Runtime.test("typeName") {
   expectEqual("NSObject", _typeName(NSObject.self))
 
   var a : Any = SomeObjCClass()
-  expectEqual("a.SomeObjCClass", _typeName(a.dynamicType))
+  expectEqual("a.SomeObjCClass", _typeName(type(of: a)))
   
   a = SomeNSObjectSubclass()
-  expectEqual("a.SomeNSObjectSubclass", _typeName(a.dynamicType))
+  expectEqual("a.SomeNSObjectSubclass", _typeName(type(of: a)))
 
   a = NSObject()
-  expectEqual("NSObject", _typeName(a.dynamicType))
+  expectEqual("NSObject", _typeName(type(of: a)))
 }
 
 class GenericClass<T> {}
@@ -694,7 +686,7 @@ Reflection.test("MetatypeMirror") {
     expectEqual(expectedComposition, output)
     
     let objcDefinedProtoType = NSObjectProtocol.self
-    expectEqual(String(objcDefinedProtoType), "NSObject")
+    expectEqual(String(describing: objcDefinedProtoType), "NSObject")
   }
 }
 
@@ -755,7 +747,7 @@ Reflection.test("Unmanaged/nil") {
 Reflection.test("Unmanaged/not-nil") {
   var output = ""
   var optionalURL: Unmanaged<CFURL>? =
-    Unmanaged.passRetained(CFURLCreateWithString(nil, "http://llvm.org/", nil))
+    Unmanaged.passRetained(CFURLCreateWithString(nil, "http://llvm.org/" as CFString, nil))
   dump(optionalURL, to: &output)
 
   let expected =
@@ -824,7 +816,7 @@ Reflection.test("Name of metatype of artificial subclass") {
   obj.addObserver(obj, forKeyPath: "foo", options: [.new], context: &KVOHandle)
   obj.removeObserver(obj, forKeyPath: "foo")
 
-  expectEqual("\(obj.dynamicType)", "TestArtificialSubclass")
+  expectEqual("\(type(of: obj))", "TestArtificialSubclass")
 }
 
 @objc class StringConvertibleInDebugAndOtherwise : NSObject {

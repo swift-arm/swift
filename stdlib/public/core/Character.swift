@@ -176,14 +176,14 @@ public struct Character :
     let (count, initialUTF8) = s._core._encodeSomeUTF8(from: 0)
     // Notice that the result of sizeof() is a small non-zero number and can't
     // overflow when multiplied by 8.
-    let bits = sizeofValue(initialUTF8) &* 8 &- 1
+    let bits = MemoryLayout.size(ofValue: initialUTF8) &* 8 &- 1
     if _fastPath(
       count == s._core.count && (initialUTF8 & (1 << numericCast(bits))) != 0) {
       _representation = .small(Builtin.trunc_Int64_Int63(initialUTF8._value))
     }
     else {
       if let native = s._core.nativeBuffer,
-         native.start == UnsafeMutablePointer(s._core._baseAddress!) {
+         native.start == s._core._baseAddress! {
         _representation = .large(native._storage)
         return
       }
@@ -352,6 +352,14 @@ public struct Character :
   @_versioned
   internal var _representation: Representation
 }
+
+extension Character : CustomStringConvertible {
+  public var description: String {
+    return String(describing: self)
+  }
+}
+
+extension Character : LosslessStringConvertible {}
 
 extension Character : CustomDebugStringConvertible {
   /// A textual representation of the character, suitable for debugging.

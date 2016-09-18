@@ -89,12 +89,11 @@ bool TypeBase::hasReferenceSemantics() {
   return getCanonicalType().hasReferenceSemantics();
 }
 
-bool TypeBase::isNever() {
+bool TypeBase::isUninhabited() {
   if (auto nominalDecl = getAnyNominal())
     if (auto enumDecl = dyn_cast<EnumDecl>(nominalDecl))
       if (enumDecl->getAllElements().empty())
         return true;
-
   return false;
 }
 
@@ -2189,33 +2188,8 @@ getForeignRepresentable(Type type, ForeignLanguage language,
   if (type->isTypeParameter() && language == ForeignLanguage::ObjectiveC)
     return { ForeignRepresentableKind::Object, nullptr };
 
-  // In Objective-C, existentials involving Error are bridged
-  // to NSError.
-  if (language == ForeignLanguage::ObjectiveC &&
-      type->isExistentialWithError()) {
-    return { ForeignRepresentableKind::BridgedError, nullptr };
-  }
-
-  /// Determine whether the given type is a type that is bridged to NSError
-  /// because it conforms to the Error protocol.
-  auto isBridgedErrorViaConformance = [dc](Type type) -> bool {
-    ASTContext &ctx = type->getASTContext();
-    auto errorProto = ctx.getProtocol(KnownProtocolKind::Error);
-    if (!errorProto) return false;
-
-    return dc->getParentModule()->lookupConformance(type, errorProto,
-                                                    ctx.getLazyResolver())
-             .hasValue();
-  };
-
   auto nominal = type->getAnyNominal();
-  if (!nominal) {
-    /// It might still be a bridged Error via conformance to Error.
-    if (isBridgedErrorViaConformance(type))
-      return { ForeignRepresentableKind::BridgedError, nullptr };
-
-    return failure();
-  }
+  if (!nominal) return failure();
 
   ASTContext &ctx = nominal->getASTContext();
 
@@ -2249,12 +2223,19 @@ getForeignRepresentable(Type type, ForeignLanguage language,
     case ForeignLanguage::ObjectiveC:
       if (isa<StructDecl>(nominal) || isa<EnumDecl>(nominal)) {
         // Optional structs are not representable in (Objective-)C if they
-        // originally came from C, whether or not they are bridged. If they
-        // are defined in Swift, they are only representable if they are
-        // bridged (checked below).
+        // originally came from C, whether or not they are bridged, unless they
+        // came from swift_newtype. If they are defined in Swift, they are only
+        // representable if they are bridged (checked below).
         if (wasOptional) {
-          if (nominal->hasClangNode())
+          if (nominal->hasClangNode()) {
+            Type underlyingType =
+                nominal->getDeclaredType()->getSwiftNewtypeUnderlyingType();
+            if (underlyingType) {
+              return getForeignRepresentable(OptionalType::get(underlyingType),
+                                             language, dc);
+            }
             return failure();
+          }
           break;
         }
       }
@@ -2300,13 +2281,7 @@ getForeignRepresentable(Type type, ForeignLanguage language,
   // Determine whether this nominal type is known to be representable
   // in this foreign language.
   auto result = ctx.getForeignRepresentationInfo(nominal, language, dc);
-  if (result.getKind() == ForeignRepresentableKind::None) {
-    /// It might still be a bridged Error via conformance to Error.
-    if (isBridgedErrorViaConformance(type))
-      return { ForeignRepresentableKind::BridgedError, nullptr };
-
-    return failure();
-  }
+  if (result.getKind() == ForeignRepresentableKind::None) return failure();
 
   if (wasOptional && !result.isRepresentableAsOptional())
     return failure();

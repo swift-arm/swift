@@ -17,6 +17,7 @@
 # configuring with -DSWIFT_CHECK_ESSENTIAL_STDLIB=YES
 set(SWIFTLIB_ESSENTIAL
   ### PLEASE KEEP THIS LIST IN ALPHABETICAL ORDER ###
+  # Some files can't be sorted alphabetically, see notes in the list below.
   Algorithm.swift
   ArrayBody.swift
   ArrayBuffer.swift
@@ -56,6 +57,11 @@ set(SWIFTLIB_ESSENTIAL
   FloatingPointTypes.swift.gyb
   Hashable.swift
   HashedCollections.swift.gyb
+  # WORKAROUND: This file name is not sorted alphabetically in the list because
+  # if we do so, the compiler crashes.
+  AnyHashable.swift
+  # END WORKAROUND
+  HashedCollectionsAnyHashableExtensions.swift.gyb
   Hashing.swift
   HeapBuffer.swift
   ImplicitlyUnwrappedOptional.swift
@@ -64,13 +70,13 @@ set(SWIFTLIB_ESSENTIAL
   InputStream.swift
   IntegerArithmetic.swift.gyb
   IntegerParsing.swift.gyb
-  Integers.swift.gyb
   Join.swift
   LazyCollection.swift.gyb
   LazySequence.swift
   LifetimeManager.swift
   ManagedBuffer.swift
   Map.swift.gyb
+  MemoryLayout.swift
   Mirrors.swift.gyb
   Misc.swift
   MutableCollection.swift
@@ -104,6 +110,7 @@ set(SWIFTLIB_ESSENTIAL
   String.swift
   StringBridge.swift
   StringBuffer.swift
+  StringComparable.swift
   StringCore.swift
   StringInterpolation.swift.gyb
   StringLegacy.swift

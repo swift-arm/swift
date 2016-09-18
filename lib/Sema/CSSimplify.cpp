@@ -469,45 +469,53 @@ matchCallArguments(ArrayRef<CallArgParam> args,
 
 /// Find the callee declaration and uncurry level for a given call
 /// locator.
-static std::tuple<ValueDecl *, unsigned, ArrayRef<Identifier>>
+static std::tuple<ValueDecl *, unsigned, ArrayRef<Identifier>, bool>
 getCalleeDeclAndArgs(ConstraintSystem &cs,
                      ConstraintLocatorBuilder callLocator,
                      SmallVectorImpl<Identifier> &argLabelsScratch) {
   ArrayRef<Identifier> argLabels;
+  bool hasTrailingClosure = false;
 
-  // If the call locator is not just a call expression, there's
-  // nothing to do.
+  // Break down the call.
   SmallVector<LocatorPathElt, 2> path;
   auto callExpr = callLocator.getLocatorParts(path);
-  if (!callExpr) return std::make_tuple(nullptr, 0, argLabels);
+  if (!callExpr) 
+    return std::make_tuple(nullptr, 0, argLabels, hasTrailingClosure);
 
   // Our remaining path can only be 'ApplyArgument' or 'SubscriptIndex'.
   if (!path.empty() &&
       !(path.size() == 1 &&
         (path.back().getKind() == ConstraintLocator::ApplyArgument ||
          path.back().getKind() == ConstraintLocator::SubscriptIndex)))
-    return std::make_tuple(nullptr, 0, argLabels);
+    return std::make_tuple(nullptr, 0, argLabels, hasTrailingClosure);
 
   // Dig out the callee.
   Expr *calleeExpr;
   if (auto call = dyn_cast<CallExpr>(callExpr)) {
     calleeExpr = call->getDirectCallee();
-    argLabels = call->getArgumentLabels(argLabelsScratch);
+    argLabels = call->getArgumentLabels();
+    hasTrailingClosure = call->hasTrailingClosure();
   } else if (auto unresolved = dyn_cast<UnresolvedMemberExpr>(callExpr)) {
     calleeExpr = callExpr;
-    argLabels = unresolved->getArgumentLabels(argLabelsScratch);
+    argLabels = unresolved->getArgumentLabels();
+    hasTrailingClosure = unresolved->hasTrailingClosure();
   } else if (auto subscript = dyn_cast<SubscriptExpr>(callExpr)) {
     calleeExpr = callExpr;
-    argLabels = subscript->getArgumentLabels(argLabelsScratch);
+    argLabels = subscript->getArgumentLabels();
+    hasTrailingClosure = subscript->hasTrailingClosure();
   } else if (auto dynSubscript = dyn_cast<DynamicSubscriptExpr>(callExpr)) {
     calleeExpr = callExpr;
-    argLabels = dynSubscript->getArgumentLabels(argLabelsScratch);
+    argLabels = dynSubscript->getArgumentLabels();
+    hasTrailingClosure = dynSubscript->hasTrailingClosure();
   } else {
-    if (auto apply = dyn_cast<ApplyExpr>(callExpr))
+    if (auto apply = dyn_cast<ApplyExpr>(callExpr)) {
       argLabels = apply->getArgumentLabels(argLabelsScratch);
-    else if (auto objectLiteral = dyn_cast<ObjectLiteralExpr>(callExpr))
-      argLabels = objectLiteral->getArgumentLabels(argLabelsScratch);
-    return std::make_tuple(nullptr, 0, argLabels);
+      assert(!apply->hasTrailingClosure());
+    } else if (auto objectLiteral = dyn_cast<ObjectLiteralExpr>(callExpr)) {
+      argLabels = objectLiteral->getArgumentLabels();
+      hasTrailingClosure = objectLiteral->hasTrailingClosure();
+    }
+    return std::make_tuple(nullptr, 0, argLabels, hasTrailingClosure);
   }
 
   // Determine the target locator.
@@ -551,7 +559,8 @@ getCalleeDeclAndArgs(ConstraintSystem &cs,
   }
 
   // If we didn't find any matching overloads, we're done.
-  if (!choice) return std::make_tuple(nullptr, 0, argLabels);
+  if (!choice)
+    return std::make_tuple(nullptr, 0, argLabels, hasTrailingClosure);
 
   // If there's a declaration, return it.
   if (choice->isDecl()) {
@@ -570,10 +579,10 @@ getCalleeDeclAndArgs(ConstraintSystem &cs,
       }
     }
 
-    return std::make_tuple(decl, level, argLabels);
+    return std::make_tuple(decl, level, argLabels, hasTrailingClosure);
   }
 
-  return std::make_tuple(nullptr, 0, argLabels);
+  return std::make_tuple(nullptr, 0, argLabels, hasTrailingClosure);
 }
 
 // Match the argument of a call to the parameter.
@@ -604,7 +613,8 @@ matchCallArguments(ConstraintSystem &cs, TypeMatchKind kind,
   unsigned calleeLevel;
   ArrayRef<Identifier> argLabels;
   SmallVector<Identifier, 2> argLabelsScratch;
-  std::tie(callee, calleeLevel, argLabels) =
+  bool hasTrailingClosure = false;
+  std::tie(callee, calleeLevel, argLabels, hasTrailingClosure) =
     getCalleeDeclAndArgs(cs, locator, argLabelsScratch);
   auto params = decomposeParamType(paramType, callee, calleeLevel);
 
@@ -614,8 +624,7 @@ matchCallArguments(ConstraintSystem &cs, TypeMatchKind kind,
   // Match up the call arguments to the parameters.
   MatchCallArgumentListener listener;
   SmallVector<ParamBinding, 4> parameterBindings;
-  if (constraints::matchCallArguments(args, params,
-                                      hasTrailingClosure(locator),
+  if (constraints::matchCallArguments(args, params, hasTrailingClosure,
                                       cs.shouldAttemptFixes(), listener,
                                       parameterBindings))
     return ConstraintSystem::SolutionKind::Error;
@@ -1570,6 +1579,17 @@ ConstraintSystem::matchTypes(Type type1, Type type2, TypeMatchKind kind,
       conversionsOrFixes.push_back(ConversionRestrictionKind::Superclass);
     }
     
+    // T -> AnyHashable.
+    if (isAnyHashableType(desugar2)) {
+      // Don't allow this in operator contexts or we'll end up allowing
+      // 'T() == U()' for unrelated T and U that just happen to be Hashable.
+      // We can remove this special case when we implement operator hiding.
+      if (kind != TypeMatchKind::OperatorArgumentConversion) {
+        conversionsOrFixes.push_back(
+                              ConversionRestrictionKind::HashableToAnyHashable);
+      }
+    }
+
     // Metatype to object conversion.
     //
     // Class and protocol metatypes are interoperable with certain Objective-C
@@ -1627,13 +1647,16 @@ ConstraintSystem::matchTypes(Type type1, Type type2, TypeMatchKind kind,
       }
     }
     
-    // Implicit collection conversions.
+    // Special implicit nominal conversions.
     if (kind >= TypeMatchKind::Conversion) {      
+      // Array -> Array.
       if (isArrayType(desugar1) && isArrayType(desugar2)) {
         conversionsOrFixes.push_back(ConversionRestrictionKind::ArrayUpcast);
+      // Dictionary -> Dictionary.
       } else if (isDictionaryType(desugar1) && isDictionaryType(desugar2)) {
         conversionsOrFixes.push_back(
           ConversionRestrictionKind::DictionaryUpcast);
+      // Set -> Set.
       } else if (isSetType(desugar1) && isSetType(desugar2)) {
         conversionsOrFixes.push_back(
           ConversionRestrictionKind::SetUpcast);
@@ -1876,19 +1899,6 @@ ConstraintSystem::matchTypes(Type type1, Type type2, TypeMatchKind kind,
   // we hit commit_to_conversions below, but we have to add a token restriction
   // to ensure we wrap the metatype value in a metatype erasure.
   if (concrete && type2->isExistentialType()) {
-    
-    // If we're binding to an empty existential, we need to make sure that the
-    // conversion is valid.
-    if (kind == TypeMatchKind::BindType &&
-        type2->isEmptyExistentialComposition()) {
-      
-      conversionsOrFixes.push_back(ConversionRestrictionKind::Existential);
-      addConstraint(ConstraintKind::SelfObjectOfProtocol,
-                    type1, type2, getConstraintLocator(locator));
-      
-      return SolutionKind::Solved;
-    }
-    
     if (kind == TypeMatchKind::ConformsTo) {
       conversionsOrFixes.push_back(ConversionRestrictionKind::
                                    MetatypeToExistentialMetatype);
@@ -2113,10 +2123,9 @@ commit_to_conversions:
 }
 
 ConstraintSystem::SolutionKind
-ConstraintSystem::simplifyConstructionConstraint(Type valueType, 
-                                                 FunctionType *fnType,
-                                                 unsigned flags,
-                                                 ConstraintLocator *locator) {
+ConstraintSystem::simplifyConstructionConstraint(
+    Type valueType, FunctionType *fnType, unsigned flags,
+    FunctionRefKind functionRefKind, ConstraintLocator *locator) {
   // Desugar the value type.
   auto desugarValueType = valueType->getDesugaredType();
 
@@ -2222,7 +2231,7 @@ ConstraintSystem::simplifyConstructionConstraint(Type valueType,
   // variable T. T2 is the result type provided via the construction
   // constraint itself.
   addValueMemberConstraint(MetatypeType::get(valueType, TC.Context), name,
-                           FunctionType::get(tv, resultType),
+                           FunctionType::get(tv, resultType), functionRefKind,
                            getConstraintLocator(
                              fnLocator, 
                              ConstraintLocator::ConstructorMember));
@@ -2608,7 +2617,8 @@ getArgumentLabels(ConstraintSystem &cs, ConstraintLocatorBuilder locator) {
 /// referenced.
 MemberLookupResult ConstraintSystem::
 performMemberLookup(ConstraintKind constraintKind, DeclName memberName,
-                    Type baseTy, ConstraintLocator *memberLocator,
+                    Type baseTy, FunctionRefKind functionRefKind,
+                    ConstraintLocator *memberLocator,
                     bool includeInaccessibleMembers) {
   Type baseObjTy = baseTy->getRValueType();
 
@@ -2834,8 +2844,8 @@ performMemberLookup(ConstraintKind constraintKind, DeclName memberName,
         }
       }
       
-      result.addViable(OverloadChoice(baseTy, ctor,
-                                      /*isSpecialized=*/false, *this));
+      result.addViable(OverloadChoice(baseTy, ctor, /*isSpecialized=*/false,
+                                      functionRefKind));
     }
 
 
@@ -2878,7 +2888,8 @@ performMemberLookup(ConstraintKind constraintKind, DeclName memberName,
         return result.markErrorAlreadyDiagnosed();
       
       result.addViable(OverloadChoice(baseTy, candidate.first,
-                                      /*isSpecialized=*/false));
+                                      /*isSpecialized=*/false,
+                                      functionRefKind));
     }
     
     return result;
@@ -2991,13 +3002,15 @@ performMemberLookup(ConstraintKind constraintKind, DeclName memberName,
       assert(cand->getDeclContext()->isTypeContext() && "Dynamic lookup bug");
 
       // We found this declaration via dynamic lookup, record it as such.
-      result.addViable(OverloadChoice::getDeclViaDynamic(baseTy, cand));
+      result.addViable(OverloadChoice::getDeclViaDynamic(baseTy, cand,
+                                                         functionRefKind));
       return;
     }
 
     // If we have a bridged type, we found this declaration via bridging.
     if (isBridged) {
-      result.addViable(OverloadChoice::getDeclViaBridge(bridgedType, cand));
+      result.addViable(OverloadChoice::getDeclViaBridge(bridgedType, cand,
+                                                        functionRefKind));
       return;
     }
 
@@ -3008,11 +3021,13 @@ performMemberLookup(ConstraintKind constraintKind, DeclName memberName,
       ovlBaseTy = MetatypeType::get(baseTy->castTo<MetatypeType>()
         ->getInstanceType()
         ->getAnyOptionalObjectType());
-      result.addViable(OverloadChoice::getDeclViaUnwrappedOptional(ovlBaseTy,
-                                                                   cand));
+      result.addViable(
+        OverloadChoice::getDeclViaUnwrappedOptional(ovlBaseTy, cand,
+                                                    functionRefKind));
     } else {
       result.addViable(OverloadChoice(ovlBaseTy, cand,
-                                      /*isSpecialized=*/false, *this));
+                                      /*isSpecialized=*/false,
+                                      functionRefKind));
     }
   };
 
@@ -3121,7 +3136,8 @@ ConstraintSystem::simplifyMemberConstraint(const Constraint &constraint) {
 
   MemberLookupResult result =
     performMemberLookup(constraint.getKind(), constraint.getMember(),
-                        baseTy, constraint.getLocator(),
+                        baseTy, constraint.getFunctionRefKind(),
+                        constraint.getLocator(),
                         /*includeInaccessibleMembers*/false);
   
   Type memberTy = constraint.getSecondType();
@@ -3174,6 +3190,7 @@ ConstraintSystem::simplifyMemberConstraint(const Constraint &constraint) {
                                        baseObjTy->getOptionalObjectType(),
                                        constraint.getSecondType(),
                                        constraint.getMember(),
+                                       constraint.getFunctionRefKind(),
                                        constraint.getLocator()));
       return SolutionKind::Solved;
     }
@@ -3206,6 +3223,7 @@ ConstraintSystem::simplifyMemberConstraint(const Constraint &constraint) {
     addValueMemberConstraint(baseObjTy->getOptionalObjectType(),
                              constraint.getMember(),
                              constraint.getSecondType(),
+                             constraint.getFunctionRefKind(),
                              constraint.getLocator());
     return SolutionKind::Solved;
   }
@@ -3433,7 +3451,8 @@ retry:
   if (auto meta2 = dyn_cast<AnyMetatypeType>(desugar2)) {
     // Construct the instance from the input arguments.
     return simplifyConstructionConstraint(meta2->getInstanceType(), func1,
-                                          flags, 
+                                          flags,
+                                          FunctionRefKind::SingleApply,
                                           getConstraintLocator(outerLocator));
   }
 
@@ -3731,14 +3750,17 @@ ConstraintSystem::simplifyRestrictedConstraint(ConversionRestrictionKind restric
         auto int8Con = Constraint::create(*this, ConstraintKind::Bind,
                                        btv2, TC.getInt8Type(DC),
                                        DeclName(),
+                                       FunctionRefKind::Compound,
                                        getConstraintLocator(locator));
         auto uint8Con = Constraint::create(*this, ConstraintKind::Bind,
                                         btv2, TC.getUInt8Type(DC),
                                         DeclName(),
+                                        FunctionRefKind::Compound,
                                         getConstraintLocator(locator));
         auto voidCon = Constraint::create(*this, ConstraintKind::Bind,
                                         btv2, TC.Context.TheEmptyTupleType,
                                         DeclName(),
+                                        FunctionRefKind::Compound,
                                         getConstraintLocator(locator));
         
         Constraint *disjunctionChoices[] = {int8Con, uint8Con, voidCon};
@@ -4064,6 +4086,39 @@ ConstraintSystem::simplifyRestrictedConstraint(ConversionRestrictionKind restric
                       locator);
   }
 
+  // T1 <c T2 && T2 : Hashable ===> T1 <c AnyHashable
+  case ConversionRestrictionKind::HashableToAnyHashable: {
+    // We never want to do this if the LHS is already AnyHashable.
+    if (isAnyHashableType(type1->getRValueType())) {
+      return SolutionKind::Error;
+    }
+
+    addContextualScore();
+    increaseScore(SK_UserConversion); // FIXME: Use separate score kind?
+    if (worseThanBestSolution()) {
+      return SolutionKind::Error;
+    }
+
+    auto hashableProtocol =
+      TC.Context.getProtocol(KnownProtocolKind::Hashable);
+    if (!hashableProtocol)
+      return SolutionKind::Error;
+
+    auto constraintLocator = getConstraintLocator(locator);
+    auto tv = createTypeVariable(constraintLocator, TVO_PrefersSubtypeBinding);
+    
+    addConstraint(
+      Constraint::create(*this,
+                         ConstraintKind::ConformsTo,
+                         tv, hashableProtocol->getDeclaredType(),
+                         DeclName(),
+                         FunctionRefKind::Compound,
+                         constraintLocator));
+
+    return matchTypes(type1, tv, TypeMatchKind::Conversion, subFlags,
+                      locator);
+  }
+
   // T bridges to C and C < U ===> T <c U
   case ConversionRestrictionKind::BridgeToObjC: {
     auto objcClass = TC.getBridgedToObjC(DC, type1);
@@ -4095,6 +4150,7 @@ ConstraintSystem::simplifyRestrictedConstraint(ConversionRestrictionKind restric
             Constraint::create(*this,
                                ConstraintKind::BridgedToObjectiveC,
                                arg, Type(), DeclName(),
+                               FunctionRefKind::Compound,
                                getConstraintLocator(
                                  locator.withPathElement(
                                    LocatorPathElt::getGenericArgument(
@@ -4120,7 +4176,7 @@ ConstraintSystem::simplifyRestrictedConstraint(ConversionRestrictionKind restric
     }
 
     // If the bridged value type is generic, the generic arguments
-    // must match the 
+    // must either match or be bridged.
     // FIXME: This should be an associated type of the protocol.
     if (auto bgt1 = type2->getAs<BoundGenericType>()) {
       if (bgt1->getDecl() == TC.Context.getArrayDecl()) {
@@ -4163,7 +4219,7 @@ ConstraintSystem::simplifyRestrictedConstraint(ConversionRestrictionKind restric
                         locator.withPathElement(
                           LocatorPathElt::getGenericArgument(0))));
       } else {
-        llvm_unreachable("unhandled generic bridged type");
+        // Nothing special to do; matchTypes will match generic arguments.
       }
     }
 

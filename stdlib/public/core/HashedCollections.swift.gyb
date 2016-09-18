@@ -265,11 +265,11 @@ internal func _stdlib_NSObject_isEqual(_ lhs: AnyObject, _ rhs: AnyObject) -> Bo
 /// Like `UnsafeMutablePointer<Unmanaged<AnyObject>>`, or `id
 /// __unsafe_unretained *` in Objective-C ARC.
 internal struct _UnmanagedAnyObjectArray {
-  /// Underlying pointer, Unmanaged to escape reference counting.
-  internal var value: UnsafeMutablePointer<Unmanaged<AnyObject>>
+  /// Underlying pointer.
+  internal var value: UnsafeMutableRawPointer
 
   internal init(_ up: UnsafeMutablePointer<AnyObject>) {
-    self.value = UnsafeMutablePointer(up)
+    self.value = UnsafeMutableRawPointer(up)
   }
 
   internal init?(_ up: UnsafeMutablePointer<AnyObject>?) {
@@ -279,10 +279,16 @@ internal struct _UnmanagedAnyObjectArray {
 
   internal subscript(i: Int) -> AnyObject {
     get {
-      return value[i].takeUnretainedValue()
+      let unmanaged = value.load(
+        fromByteOffset: i * MemoryLayout<AnyObject>.stride,
+        as: Unmanaged<AnyObject>.self)
+      return unmanaged.takeUnretainedValue()
     }
     nonmutating set(newValue) {
-      value[i] = Unmanaged.passUnretained(newValue)
+      let unmanaged = Unmanaged.passUnretained(newValue)
+      value.storeBytes(of: unmanaged,
+        toByteOffset: i * MemoryLayout<AnyObject>.stride,
+        as: Unmanaged<AnyObject>.self)
     }
   }
 }
@@ -362,7 +368,6 @@ internal struct _UnmanagedAnyObjectArray {
 ///     print(primes.intersection(favoriteNumbers))
 ///     // Prints "[5, 7]"
 ///
-///
 /// Sequence and Collection Operations
 /// ==================================
 ///
@@ -416,7 +421,7 @@ internal struct _UnmanagedAnyObjectArray {
 /// set's `Element` type is neither a class nor an `@objc` protocol, any
 /// required bridging of elements occurs at the first access of each element,
 /// so the first operation that uses the contents of the set (for example, a
-/// membership test) can take O(N).
+/// membership test) can take O(*n*).
 ///
 /// Bridging from `NSSet` to `Set` first calls the `copy(with:)` method
 /// (`- copyWithZone:` in Objective-C) on the set to get an immutable copy and
@@ -515,7 +520,8 @@ public struct Set<Element : Hashable> :
   /// Returns a Boolean value that indicates whether the given element exists
   /// in the set.
   ///
-  /// For example:
+  /// This example uses the `contains(_:)` method to test whether an integer is
+  /// a member of a set of prime numbers.
   ///
   ///     let primes: Set = [2, 3, 5, 7]
   ///     let x = 5
@@ -606,7 +612,7 @@ public struct Set<Element : Hashable> :
   
   /// Removes the specified element from the set.
   ///
-  /// For example:
+  /// This example removes the element `"sugar"` from a set of ingredients.
   ///
   ///     var ingredients: Set = ["cocoa beans", "sugar", "cocoa butter", "salt"]
   ///     let toRemove = "sugar"
@@ -866,7 +872,8 @@ public struct Set<Element : Hashable> :
   /// Returns a Boolean value that indicates whether the set has no members in
   /// common with the given sequence.
   ///
-  /// For example:
+  /// In the following example, the `employees` set is disjoint with the
+  /// elements of the `visitors` array because no name appears in both.
   ///
   ///     let employees: Set = ["Alicia", "Bethany", "Chris", "Diana", "Eric"]
   ///     let visitors = ["Marcia", "Nathaniel", "Olivia"]
@@ -886,7 +893,8 @@ public struct Set<Element : Hashable> :
   /// Returns a new set with the elements of both this set and the given
   /// sequence.
   ///
-  /// For example:
+  /// In the following example, the `attendeesAndVisitors` set is made up
+  /// of the elements of the `attendees` set and the `visitors` array:
   ///
   ///     let attendees: Set = ["Alicia", "Bethany", "Diana"]
   ///     let visitors = ["Marcia", "Nathaniel"]
@@ -896,8 +904,7 @@ public struct Set<Element : Hashable> :
   ///
   /// If the set already contains one or more elements that are also in
   /// `other`, the existing members are kept. If `other` contains multiple
-  /// instances of equivalent elements, only the first instance is kept. For
-  /// example:
+  /// instances of equivalent elements, only the first instance is kept.
   ///
   ///     let initialIndices = Set(0..<5)
   ///     let expandedIndices = initialIndices.union([2, 3, 6, 6, 7, 7])
@@ -936,7 +943,8 @@ public struct Set<Element : Hashable> :
   /// Returns a new set containing the elements of this set that do not occur
   /// in the given sequence.
   ///
-  /// For example:
+  /// In the following example, the `nonNeighbors` set is made up of the
+  /// elements of the `employees` set that are not elements of `neighbors`:
   ///
   ///     let employees: Set = ["Alicia", "Bethany", "Chris", "Diana", "Eric"]
   ///     let neighbors = ["Bethany", "Eric", "Forlani", "Greta"]
@@ -960,7 +968,9 @@ public struct Set<Element : Hashable> :
 
   /// Removes the elements of the given sequence from the set.
   ///
-  /// For example:
+  /// In the following example, the elements of the `employees` set that are
+  /// also elements of the `neighbors` array are removed. In particular, the
+  /// names `"Bethany"` and `"Eric"` are removed from `employees`.
   ///
   ///     var employees: Set = ["Alicia", "Bethany", "Chris", "Diana", "Eric"]
   ///     let neighbors = ["Bethany", "Eric", "Forlani", "Greta"]
@@ -984,7 +994,10 @@ public struct Set<Element : Hashable> :
   /// Returns a new set with the elements that are common to both this set and
   /// the given sequence.
   ///
-  /// For example:
+  /// In the following example, the `bothNeighborsAndEmployees` set is made up
+  /// of the elements that are in *both* the `employees` and `neighbors` sets.
+  /// Elements that are in either one or the other, but not both, are left out
+  /// of the result of the intersection.
   ///
   ///     let employees: Set = ["Alicia", "Bethany", "Chris", "Diana", "Eric"]
   ///     let neighbors = ["Bethany", "Eric", "Forlani", "Greta"]
@@ -1002,7 +1015,9 @@ public struct Set<Element : Hashable> :
 
   /// Removes the elements of the set that aren't also in the given sequence.
   ///
-  /// For example:
+  /// In the following example, the elements of the `employees` set that are
+  /// not also members of the `neighbors` set are removed. In particular, the
+  /// names `"Alicia"`, `"Chris"`, and `"Diana"` are removed.
   ///
   ///     var employees: Set = ["Alicia", "Bethany", "Chris", "Diana", "Eric"]
   ///     let neighbors = ["Bethany", "Eric", "Forlani", "Greta"]
@@ -1032,7 +1047,10 @@ public struct Set<Element : Hashable> :
   /// Returns a new set with the elements that are either in this set or in the
   /// given sequence, but not in both.
   ///
-  /// For example:
+  /// In the following example, the `eitherNeighborsOrEmployees` set is made up
+  /// of the elements of the `employees` and `neighbors` sets that are not in
+  /// both `employees` *and* `neighbors`. In particular, the names `"Bethany"`
+  /// and `"Eric"` do not appear in `eitherNeighborsOrEmployees`.
   ///
   ///     let employees: Set = ["Alicia", "Bethany", "Diana", "Eric"]
   ///     let neighbors = ["Bethany", "Eric", "Forlani"]
@@ -1052,7 +1070,12 @@ public struct Set<Element : Hashable> :
   /// Replace this set with the elements contained in this set or the given
   /// set, but not both.
   ///
-  /// For example:
+  /// In the following example, the elements of the `employees` set that are
+  /// also members of `neighbors` are removed from `employees`, while the
+  /// elements of `neighbors` that are not members of `employees` are added to
+  /// `employees`. In particular, the names `"Alicia"`, `"Chris"`, and
+  /// `"Diana"` are removed from `employees` while the name `"Forlani"` is
+  /// added.
   ///
   ///     var employees: Set = ["Alicia", "Bethany", "Diana", "Eric"]
   ///     let neighbors = ["Bethany", "Eric", "Forlani"]
@@ -1255,15 +1278,6 @@ internal func _stdlib_NSSet_allObjects(_ nss: _NSSet) ->
 
 //===--- Compiler conversion/casting entry points for Set<Element> --------===//
 
-func _impossible<T>(_:T.Type) -> T {
-  Builtin.unreachable()
-}
-
-func _unsafeUpcast<T, U>(_ x: T, to: U.Type) -> U {
-  _sanityCheck(x is U)
-  return x as? U ?? _impossible(U.self)
-}
-
 /// Perform a non-bridged upcast that always succeeds.
 ///
 /// - Precondition: `BaseValue` is a base class or base `@objc`
@@ -1272,7 +1286,7 @@ public func _setUpCast<DerivedValue, BaseValue>(_ source: Set<DerivedValue>)
   -> Set<BaseValue> {
   var builder = _SetBuilder<BaseValue>(count: source.count)
   for x in source {
-    builder.add(member: _unsafeUpcast(x, to: BaseValue.self))
+    builder.add(member: x as! BaseValue)
   }
   return builder.take()
 }
@@ -1725,7 +1739,7 @@ public struct Dictionary<Key : Hashable, Value> :
   ///   the dictionary; otherwise, `nil`.
   @inline(__always)
   public func index(forKey key: Key) -> Index? {
-    // Complexity: amortized O(1) for native storage, O(N) when wrapping an
+    // Complexity: amortized O(1) for native storage, O(*n*) when wrapping an
     // NSDictionary.
     return _variantStorage.index(forKey: key)
   }
@@ -2197,8 +2211,7 @@ public func _dictionaryUpCast<DerivedKey, DerivedValue, BaseKey, BaseValue>(
   var result = Dictionary<BaseKey, BaseValue>(minimumCapacity: source.count)
 
   for (k, v) in source {
-    result[_unsafeUpcast(k, to: BaseKey.self)]
-      = _unsafeUpcast(v, to: BaseValue.self)
+    result[k as! BaseKey] = v as! BaseValue
   }
   return result
 }
@@ -2506,15 +2519,15 @@ final internal class _Native${Self}StorageImpl<${TypeParameters}> :
   /// padding to align the start to word alignment.
   internal static func bytesForBitMap(capacity: Int) -> Int {
     let numWords = _UnsafeBitMap.sizeInWords(forSizeInBits: capacity)
-    return numWords * strideof(UInt.self) + alignof(UInt.self)
+    return numWords * MemoryLayout<UInt>.stride + MemoryLayout<UInt>.alignment
   }
 
   /// Returns the bytes necessary to store 'capacity' keys and padding to align
   /// the start to the alignment of the 'Key' type assuming a word aligned base
   /// address.
   internal static func bytesForKeys(capacity: Int) -> Int {
-    let padding = max(0, alignof(Key.self) - alignof(UInt.self))
-    return strideof(Key.self) * capacity + padding
+    let padding = max(0, MemoryLayout<Key>.alignment - MemoryLayout<UInt>.alignment)
+    return MemoryLayout<Key>.stride * capacity + padding
   }
 
 %if Self == 'Dictionary':
@@ -2523,9 +2536,9 @@ final internal class _Native${Self}StorageImpl<${TypeParameters}> :
   /// address aligned to the maximum of the alignment of the 'Key' type and the
   /// alignment of a word.
   internal static func bytesForValues(capacity: Int) -> Int {
-    let maxPrevAlignment = max(alignof(Key.self), alignof(UInt.self))
-    let padding = max(0, alignof(Value.self) - maxPrevAlignment)
-    return strideof(Value.self) * capacity + padding
+    let maxPrevAlignment = max(MemoryLayout<Key>.alignment, MemoryLayout<UInt>.alignment)
+    let padding = max(0, MemoryLayout<Value>.alignment - maxPrevAlignment)
+    return MemoryLayout<Value>.stride * capacity + padding
   }
 %end
 
@@ -2577,9 +2590,9 @@ final internal class _Native${Self}StorageImpl<${TypeParameters}> :
     let bitMapSizeInBytes =
       _unsafeMultiply(
         _UnsafeBitMap.sizeInWords(forSizeInBits: _body.capacity),
-        strideof(UInt.self))
+        MemoryLayout<UInt>.stride)
     let start =
-      UnsafeMutablePointer<UInt8>(_initializedHashtableEntriesBitMapStorage)
+      UnsafeMutableRawPointer(_initializedHashtableEntriesBitMapStorage)
       + bitMapSizeInBytes
     return _roundUp(start, toAlignmentOf: Key.self)
   }
@@ -2587,8 +2600,8 @@ final internal class _Native${Self}StorageImpl<${TypeParameters}> :
 %if Self == 'Dictionary':
   // This API is unsafe and needs a `_fixLifetime` in the caller.
   internal var _values: UnsafeMutablePointer<Value> {
-    let keysSizeInBytes = _unsafeMultiply(_body.capacity, strideof(Key.self))
-    let start = UnsafeMutablePointer<UInt8>(_keys) + keysSizeInBytes
+    let keysSizeInBytes = _unsafeMultiply(_body.capacity, MemoryLayout<Key>.stride)
+    let start = UnsafeMutableRawPointer(_keys) + keysSizeInBytes
     return _roundUp(start, toAlignmentOf: Value.self)
   }
 %end
@@ -3319,7 +3332,7 @@ final internal class _Native${Self}StorageOwner<${TypeParametersDecl}>
   @objc
   internal required init(
     objects: UnsafePointer<AnyObject?>,
-    forKeys: UnsafePointer<Void>,
+    forKeys: UnsafeRawPointer,
     count: Int
   ) {
     _sanityCheckFailure("don't call this designated initializer")
@@ -3354,7 +3367,8 @@ final internal class _Native${Self}StorageOwner<${TypeParametersDecl}>
   /// Returns the pointer to the stored property, which contains bridged
   /// ${Self} elements.
   internal var _heapBufferBridgedPtr: UnsafeMutablePointer<AnyObject?> {
-    return UnsafeMutablePointer(_getUnsafePointerToStoredProperties(self))
+    return _getUnsafePointerToStoredProperties(self).assumingMemoryBound(
+      to: Optional<AnyObject>.self)
   }
 
   /// The storage for bridged ${Self} elements, if present.
@@ -4749,12 +4763,14 @@ final internal class _Cocoa${Self}Iterator : IteratorProtocol {
 
   internal var _fastEnumerationStatePtr:
     UnsafeMutablePointer<_SwiftNSFastEnumerationState> {
-    return UnsafeMutablePointer(_getUnsafePointerToStoredProperties(self))
+    return _getUnsafePointerToStoredProperties(self).assumingMemoryBound(
+      to: _SwiftNSFastEnumerationState.self)
   }
 
   internal var _fastEnumerationStackBufPtr:
     UnsafeMutablePointer<_CocoaFastEnumerationStackBuf> {
-    return UnsafeMutablePointer(_fastEnumerationStatePtr + 1)
+    return UnsafeMutableRawPointer(_fastEnumerationStatePtr + 1)
+      .assumingMemoryBound(to: _CocoaFastEnumerationStackBuf.self)
   }
 
   // These members have to be word-sized integers, they cannot be limited to
@@ -4777,13 +4793,14 @@ final internal class _Cocoa${Self}Iterator : IteratorProtocol {
     let cocoa${Self} = self.cocoa${Self}
     if itemIndex == itemCount {
       let stackBufCount = _fastEnumerationStackBuf.count
-      // We can't use `withUnsafeMutablePointers` here to get pointers to
+      // We can't use `withUnsafeMutablePointer` here to get pointers to
       // properties, because doing so might introduce a writeback buffer, but
       // fast enumeration relies on the pointer identity of the enumeration
       // state struct.
       itemCount = cocoa${Self}.countByEnumerating(
         with: _fastEnumerationStatePtr,
-        objects: UnsafeMutablePointer(_fastEnumerationStackBufPtr),
+        objects: UnsafeMutableRawPointer(_fastEnumerationStackBufPtr)
+          .assumingMemoryBound(to: AnyObject.self),
         count: stackBufCount)
       if itemCount == 0 {
         itemIndex = -1
@@ -4791,8 +4808,9 @@ final internal class _Cocoa${Self}Iterator : IteratorProtocol {
       }
       itemIndex = 0
     }
-    let itemsPtrUP: UnsafeMutablePointer<AnyObject> =
-      UnsafeMutablePointer(_fastEnumerationState.itemsPtr!)
+    let itemsPtrUP =
+    UnsafeMutableRawPointer(_fastEnumerationState.itemsPtr!)
+      .assumingMemoryBound(to: AnyObject.self)
     let itemsPtr = _UnmanagedAnyObjectArray(itemsPtrUP)
     let key: AnyObject = itemsPtr[itemIndex]
     itemIndex += 1
@@ -5056,10 +5074,12 @@ extension ${Self} {
 extension Set {
   /// Removes the elements of the given set from this set.
   ///
-  /// For example:
+  /// In the following example, the elements of the `employees` set that are
+  /// also members of the `neighbors` set are removed. In particular, the
+  /// names `"Bethany"` and `"Eric"` are removed from `employees`.
   ///
   ///     var employees: Set = ["Alicia", "Bethany", "Chris", "Diana", "Eric"]
-  ///     let neighbors = ["Bethany", "Eric", "Forlani", "Greta"]
+  ///     let neighbors: Set = ["Bethany", "Eric", "Forlani", "Greta"]
   ///     employees.subtract(neighbors)
   ///     print(employees)
   ///     // Prints "["Diana", "Chris", "Alicia"]"
@@ -5069,19 +5089,19 @@ extension Set {
     _subtract(other)
   }
 
-  /// Returns a Boolean value that indicates whether this set is a subset of the
-  /// given set.
+  /// Returns a Boolean value that indicates whether this set is a subset of
+  /// the given set.
   ///
   /// Set *A* is a subset of another set *B* if every member of *A* is also a
   /// member of *B*.
   ///
-  ///     let employees = ["Alicia", "Bethany", "Chris", "Diana", "Eric"]
+  ///     let employees: Set = ["Alicia", "Bethany", "Chris", "Diana", "Eric"]
   ///     let attendees: Set = ["Alicia", "Bethany", "Diana"]
   ///     print(attendees.isSubset(of: employees))
   ///     // Prints "true"
   ///
-  /// - Parameter other: A sequence of elements. `possibleSuperset`
-  ///   must be finite.
+  /// - Parameter other: A sequence of elements. `possibleSuperset` must be
+  ///   finite.
   /// - Returns: `true` if the set is a subset of `possibleSuperset`;
   ///   otherwise, `false`.
   public func isSubset(of other: Set<Element>) -> Bool {
@@ -5110,7 +5130,8 @@ extension Set {
   /// Returns a Boolean value that indicates whether this set has no members in
   /// common with the given set.
   ///
-  /// For example:
+  /// In the following example, the `employees` set is disjoint with the
+  /// `visitors` set because no name appears in both sets.
   ///
   ///     let employees: Set = ["Alicia", "Bethany", "Chris", "Diana", "Eric"]
   ///     let visitors: Set = ["Marcia", "Nathaniel", "Olivia"]
@@ -5132,7 +5153,8 @@ extension Set {
   /// Returns a new set containing the elements of this set that do not occur
   /// in the given set.
   ///
-  /// For example:
+  /// In the following example, the `nonNeighbors` set is made up of the
+  /// elements of the `employees` set that are not elements of `neighbors`:
   ///
   ///     let employees: Set = ["Alicia", "Bethany", "Chris", "Diana", "Eric"]
   ///     let neighbors: Set = ["Bethany", "Eric", "Forlani", "Greta"]
@@ -5193,7 +5215,10 @@ extension Set {
   /// Returns a new set with the elements that are common to both this set and
   /// the given sequence.
   ///
-  /// For example:
+  /// In the following example, the `bothNeighborsAndEmployees` set is made up
+  /// of the elements that are in *both* the `employees` and `neighbors` sets.
+  /// Elements that are in either one or the other, but not both, are left out
+  /// of the result of the intersection.
   ///
   ///     let employees: Set = ["Alicia", "Bethany", "Chris", "Diana", "Eric"]
   ///     let neighbors: Set = ["Bethany", "Eric", "Forlani", "Greta"]
@@ -5216,7 +5241,12 @@ extension Set {
   /// Removes the elements of the set that are also in the given sequence and
   /// adds the members of the sequence that are not already in the set.
   ///
-  /// For example:
+  /// In the following example, the elements of the `employees` set that are
+  /// also members of `neighbors` are removed from `employees`, while the
+  /// elements of `neighbors` that are not members of `employees` are added to
+  /// `employees`. In particular, the names `"Alicia"`, `"Chris"`, and
+  /// `"Diana"` are removed from `employees` while the names `"Forlani"` and
+  /// `"Greta"` are added.
   ///
   ///     var employees: Set = ["Alicia", "Bethany", "Chris", "Diana", "Eric"]
   ///     let neighbors: Set = ["Bethany", "Eric", "Forlani", "Greta"]

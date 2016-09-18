@@ -10,11 +10,11 @@
 // REQUIRES: objc_interop
 
 import StdlibUnittest
-
-
 import Foundation
 
-var ArrayTraps = TestSuite("ArrayTraps")
+let testSuiteSuffix = _isDebugAssertConfiguration() ? "_debug" : "_release"
+
+var ArrayTraps = TestSuite("ArrayTraps" + testSuiteSuffix)
 
 class Base { }
 class Derived : Base { }
@@ -37,7 +37,7 @@ ArrayTraps.test("downcast2")
     { _isFastAssertConfiguration() },
     reason: "this trap is not guaranteed to happen in -Ounchecked"))
   .code {
-  let a: [AnyObject] = ["String", 1]
+  let a: [AnyObject] = ["String" as NSString, 1 as NSNumber]
   let sa = a as! [NSString]
   let s0 = sa[0]
   expectCrashLater()
@@ -88,7 +88,7 @@ ArrayTraps.test("bounds_with_downcast")
   let x = da[2]
 }
 
-var ArraySemanticOptzns = TestSuite("ArraySemanticOptzns")
+var ArraySemanticOptzns = TestSuite("ArraySemanticOptzns" + testSuiteSuffix)
 
 class BaseClass {
 }

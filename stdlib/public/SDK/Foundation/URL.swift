@@ -36,15 +36,15 @@ public struct URLThumbnailSizeKey : RawRepresentable, Hashable {
  As a convenience, volume resource values can be requested from any file system URL. The value returned will reflect the property value for the volume on which the resource is located.
 */
 public struct URLResourceValues {
-    private var _values: [URLResourceKey: Any]
-    private var _keys: Set<URLResourceKey>
+    fileprivate var _values: [URLResourceKey: Any]
+    fileprivate var _keys: Set<URLResourceKey>
     
     public init() {
         _values = [:]
         _keys = []
     }
     
-    private init(keys: Set<URLResourceKey>, values: [URLResourceKey: Any]) {
+    fileprivate init(keys: Set<URLResourceKey>, values: [URLResourceKey: Any]) {
         _values = values
         _keys = keys
     }
@@ -475,9 +475,9 @@ public struct URLResourceValues {
  
  URLs are the preferred way to refer to local files. Most objects that read data from or write data to a file have methods that accept a URL instead of a pathname as the file reference. For example, you can get the contents of a local file URL as `String` by calling `func init(contentsOf:encoding) throws`, or as a `Data` by calling `func init(contentsOf:options) throws`.
 */
-public struct URL : ReferenceConvertible, CustomStringConvertible, Equatable {
+public struct URL : ReferenceConvertible, Equatable {
     public typealias ReferenceType = NSURL
-    private var _url : NSURL
+    fileprivate var _url : NSURL
     
     public typealias BookmarkResolutionOptions = NSURL.BookmarkResolutionOptions
     public typealias BookmarkCreationOptions = NSURL.BookmarkCreationOptions
@@ -572,16 +572,6 @@ public struct URL : ReferenceConvertible, CustomStringConvertible, Equatable {
         _url = URL._converted(from: NSURL(fileURLWithFileSystemRepresentation: path, isDirectory: isDirectory, relativeTo: baseURL))
     }
     
-    // MARK: -
-    
-    public var description: String {
-        return _url.description
-    }
-
-    public var debugDescription: String {
-        return _url.debugDescription
-    }
-
     public var hashValue: Int {
         return _url.hash
     }
@@ -754,7 +744,7 @@ public struct URL : ReferenceConvertible, CustomStringConvertible, Equatable {
     /// File system representation is a null-terminated C string with canonical UTF-8 encoding.
     /// - note: The pointer is not valid outside the context of the block.
     @available(OSX 10.9, iOS 7.0, *)
-    public func withUnsafeFileSystemRepresentation<ResultType>(_ block: @noescape (UnsafePointer<Int8>?) throws -> ResultType) rethrows -> ResultType {
+    public func withUnsafeFileSystemRepresentation<ResultType>(_ block: (UnsafePointer<Int8>?) throws -> ResultType) rethrows -> ResultType {
         return try block(_url.fileSystemRepresentation)
     }
     
@@ -1130,7 +1120,7 @@ public struct URL : ReferenceConvertible, CustomStringConvertible, Equatable {
         }
     }
     
-    private init(reference: NSURL) {
+    fileprivate init(reference: NSURL) {
         _url = URL._converted(from: reference).copy() as! NSURL
     }
     
@@ -1164,6 +1154,24 @@ extension URL : _ObjectiveCBridgeable {
         var result: URL? = nil
         _forceBridgeFromObjectiveC(source!, result: &result)
         return result!
+    }
+}
+
+extension URL : CustomStringConvertible, CustomDebugStringConvertible {
+    public var description: String {
+        return _url.description
+    }
+    
+    public var debugDescription: String {
+        return _url.debugDescription
+    }
+}
+
+extension NSURL : _HasCustomAnyHashableRepresentation {
+    // Must be @nonobjc to avoid infinite recursion during bridging.
+    @nonobjc
+    public func _toCustomAnyHashable() -> AnyHashable? {
+        return AnyHashable(self as URL)
     }
 }
 

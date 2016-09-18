@@ -72,18 +72,28 @@ ERROR(could_not_find_value_member,none,
 ERROR(could_not_find_type_member,none,
       "type %0 has no member %1", (Type, DeclName))
 
+ERROR(could_not_find_enum_case,none,
+      "enum type %0 has no case %1; did you mean %2", (Type, DeclName, DeclName))
+
 NOTE(did_you_mean_raw_type,none,
      "did you mean to specify a raw type on the enum declaration?", ())
 
+NOTE(any_as_anyobject_fixit, none,
+     "cast 'Any' to 'AnyObject' or use 'as!' to force downcast to a more specific type to access members", ())
+
 ERROR(expected_argument_in_contextual_member,none,
-      "contextual member %0 expects argument of type %1", (DeclName, Type))
+      "member %0 expects argument of type %1", (DeclName, Type))
+ERROR(expected_parens_in_contextual_member,none,
+      "member %0 is a function; did you mean to call it?", (DeclName))
 
 ERROR(expected_result_in_contextual_member,none,
       "member %0 in %2 produces result of type %1, but context expects %2",
       (DeclName, Type, Type))
 
 ERROR(unexpected_argument_in_contextual_member,none,
-      "contextual member %0 has no associated value", (DeclName))
+      "member %0 takes no arguments", (DeclName))
+ERROR(unexpected_parens_in_contextual_member,none,
+      "member %0 is not a function", (DeclName))
 
 ERROR(could_not_use_value_member,none,
       "member %1 cannot be used on value of type %0", (Type, DeclName))
@@ -96,7 +106,7 @@ ERROR(could_not_use_type_member_on_instance,none,
 ERROR(could_not_use_enum_element_on_instance,none,
       "enum element %0 cannot be referenced as an instance member",
       (DeclName))
-ERROR(could_not_use_type_member_on_existential,none,
+ERROR(could_not_use_type_member_on_protocol_metatype,none,
       "static member %1 cannot be used on protocol metatype %0",
       (Type, DeclName))
 ERROR(could_not_use_instance_member_on_type,none,
@@ -186,6 +196,9 @@ ERROR(cannot_subscript_base,none,
       "cannot subscript a value of type %0",
       (Type))
 
+ERROR(cannot_subscript_nil_literal,none,
+      "cannot subscript a nil literal value", ())
+
 ERROR(cannot_pass_rvalue_inout_subelement,none,
       "cannot pass immutable value as inout argument: %0",
       (StringRef))
@@ -203,6 +216,9 @@ ERROR(cannot_call_with_no_params,none,
 ERROR(cannot_call_with_params, none,
       "cannot invoke %select{|initializer for type }2'%0' with an argument list"
       " of type '%1'", (StringRef, StringRef, bool))
+
+NOTE(pointer_init_to_type,none,
+      "Pointer conversion restricted: use '.assumingMemoryBound(to:)' or '.bindMemory(to:capacity:)' to view memory as a type.", ())
 
 ERROR(expected_do_in_statement,none,
       "expected 'do' keyword to designate a block of statements", ())
@@ -238,7 +254,8 @@ ERROR(cannot_invoke_closure_type,none,
 ERROR(cannot_infer_closure_type,none,
       "unable to infer closure type in the current context", ())
 ERROR(cannot_infer_closure_result_type,none,
-      "unable to infer closure return type in current context", ())
+      "unable to infer complex closure return type; "
+      "add explicit type to disambiguate", ())
 
 ERROR(incorrect_explicit_closure_result,none,
       "declared closure result %0 is incompatible with contextual type %1",
@@ -282,6 +299,10 @@ ERROR(cannot_convert_to_return_type_nil,none,
 
 ERROR(cannot_convert_thrown_type,none,
       "thrown expression type %0 does not conform to 'Error'", (Type))
+ERROR(cannot_throw_error_code,none,
+      "thrown error code type %0 does not conform to 'Error'; construct an %1 "
+      "instance", (Type, Type))
+
 ERROR(cannot_throw_nil,none,
       "cannot infer concrete Error for thrown 'nil' value", ())
 
@@ -624,6 +645,29 @@ ERROR(nonstatic_operator_in_type,none,
 ERROR(nonfinal_operator_in_class,none,
       "operator %0 declared in non-final class %1 must be 'final'",
       (Identifier, Type))
+ERROR(operator_in_unrelated_type,none,
+      "member operator %2%select{| of protocol %0}1 must have at least one "
+      "argument of type %select{%0|'Self'}1", (Type, bool, DeclName))
+
+// Precedence groups
+ERROR(ambiguous_precedence_groups,none,
+      "multiple precedence groups found", ())
+NOTE(found_this_precedence_group,none,
+     "found this matching precedence group", ())
+ERROR(unknown_precedence_group,none,
+      "unknown precedence group %0", (Identifier))
+ERROR(precedence_group_cycle,none,
+      "cycle in higherThan relation: %0", (StringRef))
+ERROR(precedence_group_lower_within_module,none,
+      "precedence group cannot be given lower precedence than group in same"
+      " module; make the other precedence group higher than this one instead",
+      ())
+NOTE(precedence_group_declared_here,none,"precedence group declared here",
+      ())
+ERROR(precedence_group_redeclared,none,
+      "precedence group redeclared", ())
+NOTE(previous_precedence_group_decl,none,
+     "previous precedence group declaration here", ())
 
 //------------------------------------------------------------------------------
 // Type Check Coercions
@@ -643,6 +687,9 @@ ERROR(types_not_convertible,none,
 NOTE(in_cast_expr_types,none,
       "in cast from type %0 to %1",
       (Type, Type))
+
+ERROR(types_not_convertible_use_bool_value,none,
+      "%0 is not convertible to %1; did you mean %0.boolValue", (Type, Type))
 
 ERROR(tuple_types_not_convertible_nelts,none,
       "%0 is not convertible to %1, "
@@ -671,7 +718,7 @@ ERROR(did_not_call_method,none,
       (Identifier))
 
 ERROR(init_not_instance_member,none,
-      "'init' is a member of the type; insert '.dynamicType' to initialize "
+      "'init' is a member of the type; use 'type(of: ...)' to initialize "
       "a new object of the same dynamic type", ())
 ERROR(super_initializer_not_in_initializer,none,
       "'super.init' cannot be called outside of an initializer", ())
@@ -763,11 +810,11 @@ ERROR(extra_named_single_element_tuple,none,
 ERROR(argument_out_of_order_named_named,none,
       "argument %0 must precede argument %1", (Identifier, Identifier))
 ERROR(argument_out_of_order_named_unnamed,none,
-      "argument %0 must precede unnamed parameter #%1", (Identifier, unsigned))
+      "argument %0 must precede unnamed argument #%1", (Identifier, unsigned))
 ERROR(argument_out_of_order_unnamed_named,none,
-      "unnamed parameter #%0 must precede argument %1", (unsigned, Identifier))
+      "unnamed argument #%0 must precede argument %1", (unsigned, Identifier))
 ERROR(argument_out_of_order_unnamed_unnamed,none,
-      "unnamed parameter #%0 must precede unnamed parameter #%1",
+      "unnamed argument #%0 must precede unnamed argument #%1",
       (unsigned, unsigned))
 
 ERROR(instance_member_use_on_type,none,
@@ -968,6 +1015,12 @@ ERROR(access_control_extension_more,none,
       "extension of %select{private|fileprivate|internal|PUBLIC}0 %1 cannot "
       "be declared %select{PRIVATE|fileprivate|internal|public}2",
       (Accessibility, DescriptiveDeclKind, Accessibility))
+ERROR(access_control_extension_open,none,
+      "extensions cannot use 'open' as their default access; use 'public'",
+      ())
+ERROR(access_control_open_bad_decl,none,
+      "only classes and overridable class members can be declared 'open';"
+      " use 'public'", ())
 
 ERROR(invalid_decl_attribute_simple,none,
       "attribute cannot be applied to declaration", ())
@@ -1493,6 +1546,10 @@ ERROR(override_not_accessible,none,
       "%select{its enclosing type|the declaration it overrides}2",
       (bool, DescriptiveDeclKind, bool))
 
+ERROR(override_of_non_open,none,
+      "overriding non-open %0 outside of its defining module",
+      (DescriptiveDeclKind))
+
 ERROR(method_does_not_override,none,
       "method does not override any method from its superclass", ())
 ERROR(property_does_not_override,none,
@@ -1582,6 +1639,8 @@ ERROR(override_mutable_covariant_subscript,none,
       (Type, Type))
 ERROR(decl_already_final,none,
       "static declarations are already final", ())
+ERROR(open_decl_cannot_be_final,none,
+      "%0 cannot be declared both 'final' and 'open'", (DescriptiveDeclKind))
 NOTE(decl_init_here,none,
      "initial value is here", ())
 
@@ -1601,6 +1660,12 @@ ERROR(inheritance_from_non_protocol,none,
   "inheritance from non-protocol type %0", (Type))
 ERROR(superclass_not_first,none,
   "superclass %0 must appear first in the inheritance clause", (Type))
+ERROR(superclass_not_open,none,
+  "cannot inherit from non-open class %0 outside of its defining module",
+  (Type))
+NOTE(superclass_here,none,"superclass is declared here", ())
+ERROR(superclass_of_open_not_open,none,
+  "superclass %0 of open class must be open", (Type))
 ERROR(circular_class_inheritance,none,
       "circular class inheritance %0", (StringRef))
 NOTE(class_here,none,
@@ -1801,6 +1866,8 @@ ERROR(autoclosure_function_type,none,
       ())
 ERROR(autoclosure_function_input_nonunit,none,
       "autoclosure argument type must be '()'", ())
+
+// FIXME: drop these when we drop @noescape
 ERROR(noescape_function_type,none,
       "@noescape may only be applied to parameters of function type",
       ())
@@ -1809,8 +1876,14 @@ ERROR(noescape_implied_by_autoclosure,none,
       "redundantly specified", ())
 ERROR(noescape_conflicts_escaping_autoclosure,none,
       "@noescape conflicts with @autoclosure(escaping)", ())
+
 ERROR(escaping_function_type,none,
       "@escaping may only be applied to parameters of function type", ())
+ERROR(escaping_non_function_parameter,none,
+      "@escaping attribute may only be used in function parameter position", ())
+
+NOTE(escaping_optional_type_argument, none,
+     "closure is already escaping in optional type argument", ())
 
 // NSManaged attribute
 ERROR(attr_NSManaged_not_instance_member,none,
@@ -1973,6 +2046,9 @@ ERROR(enumstruct_convenience_init,none,
 ERROR(nonclass_convenience_init,none,
       "convenience initializer not allowed in non-class type %0",
       (Type))
+ERROR(cfclass_convenience_init,none,
+      "convenience initializers are not supported in extensions of CF types",
+      ())
 
 ERROR(dynamic_construct_class,none,
       "constructing an object of class type %0 with a metatype value must use "
@@ -1990,11 +2066,15 @@ ERROR(construct_protocol_by_name,none,
 // Operators
 ERROR(unknown_binop,none,
        "operator is not a known binary operator", ())
-ERROR(non_assoc_adjacent,none,
-      "non-associative operator is adjacent to operator of same precedence", ())
-ERROR(incompatible_assoc,none,
-      "operator is adjacent to operator of same precedence"
-      " but incompatible associativity", ())
+ERROR(non_associative_adjacent_operators,none,
+      "adjacent operators are in non-associative precedence group %0",
+      (Identifier))
+ERROR(unordered_adjacent_operators,none,
+      "adjacent operators are in unordered precedence groups %0 and %1",
+      (Identifier, Identifier))
+ERROR(missing_builtin_precedence_group,none,
+      "broken standard library: missing builtin precedence group %0",
+      (Identifier))
 
 // If you change this, also change enum TryKindForDiagnostics.
 #define TRY_KIND_SELECT(SUB) "%select{try|try!|try?}" #SUB
@@ -2045,7 +2125,11 @@ ERROR(discard_expr_outside_of_assignment,none,
       ())
 ERROR(inout_expr_outside_of_call,none,
       "'&' can only appear immediately in a call argument list", ())
-
+ERROR(collection_literal_heterogenous,none,
+      "heterogenous collection literal could only be inferred to %0; add"
+      " explicit type annotation if this is intentional", (Type))
+ERROR(collection_literal_empty,none,
+      "empty collection literal requires an explicit type", ())
 
 ERROR(unresolved_member_no_inference,none,
       "reference to member %0 cannot be resolved without a contextual type",
@@ -2098,9 +2182,6 @@ ERROR(builtin_string_literal_broken_proto,none,
 ERROR(string_literal_broken_proto,none,
       "protocol 'ExpressibleByStringLiteral' is broken", ())
 
-ERROR(bool_type_broken,none,
-      "could not find a Bool type defined for 'is'", ())
-
 // Array literals
 ERROR(array_protocol_broken,none,
       "ExpressibleByArrayLiteral protocol definition is broken", ())
@@ -2136,11 +2217,18 @@ NOTE(generic_type_declared_here,none,
 ERROR(cannot_partially_specialize_generic_function,none,
      "cannot partially specialize a generic function", ())
 
+WARNING(use_of_void_pointer,none,
+"Unsafe%0Pointer<Void> has been replaced by Unsafe%0RawPointer", (StringRef))
+
 // Ambiguities
 ERROR(ambiguous_decl_ref,none,
       "ambiguous use of %0", (DeclName))
 ERROR(ambiguous_operator_ref,none,
       "ambiguous use of operator %0", (DeclName))
+NOTE(ambiguous_because_of_trailing_closure,none,
+     "%select{use an explicit argument label instead of a trailing closure|"
+     "avoid using a trailing closure}0 to call %1",
+     (bool, DeclName))
 
 // Cannot capture inout-ness of a parameter
 // Partial application of foreign functions not supported
@@ -2183,7 +2271,7 @@ ERROR(closure_implicit_capture_mutating_self,none,
       ())
 ERROR(nested_function_with_implicit_capture_argument,none,
       "nested function with %select{an |}0implicitly captured inout "
-      "parameter%select{|s}0 can only be used as a @noescape argument", (bool))
+      "parameter%select{|s}0 can only be used as a non-escaping argument", (bool))
 ERROR(nested_function_escaping_inout_capture,none,
       "nested function cannot capture inout parameter and escape", ())
 
@@ -2244,20 +2332,30 @@ WARNING(optional_pattern_match_promotion,none,
         (Type, Type))
 
 
-ERROR(type_of_metatype,none,
-      "'.dynamicType' is not allowed after a type name", ())
 ERROR(invalid_noescape_use,none,
-      "@noescape %select{value|parameter}1 %0 may only be called",
+      "non-escaping %select{value|parameter}1 %0 may only be called",
       (Identifier, bool))
 NOTE(noescape_autoclosure,none,
-    "parameter %0 is implicitly @noescape because it was declared @autoclosure",
+    "parameter %0 is implicitly non-escaping because it was declared @autoclosure",
+     (Identifier))
+NOTE(noescape_parameter,none,
+    "parameter %0 is implicitly non-escaping",
      (Identifier))
 
 ERROR(closure_noescape_use,none,
-      "closure use of @noescape parameter %0 may allow it to escape",
+      "closure use of non-escaping parameter %0 may allow it to escape",
       (Identifier))
 ERROR(decl_closure_noescape_use,none,
-      "declaration closing over @noescape parameter %0 may allow it to escape",
+      "declaration closing over non-escaping parameter %0 may allow it to escape",
+      (Identifier))
+ERROR(passing_noescape_to_escaping,none,
+      "passing non-escaping parameter %0 to function expecting an @escaping closure",
+      (Identifier))
+ERROR(assigning_noescape_to_escaping,none,
+      "assigning non-escaping parameter %0 to an @escaping closure",
+      (Identifier))
+ERROR(general_noescape_to_escaping,none,
+      "using non-escaping parameter %0 in a context expecting an @escaping closure",
       (Identifier))
 
 ERROR(capture_across_type_decl,none,
@@ -2427,21 +2525,6 @@ ERROR(condition_optional_element_pattern_not_valid_type,none,
       (Type))
 ERROR(enum_element_pattern_not_member_of_enum,none,
       "enum case '%0' is not a member of type %1", (StringRef, Type))
-ERROR(nominal_type_pattern_not_nominal_type,none,
-      "non-nominal type %0 cannot be used with property pattern syntax", (Type))
-ERROR(nominal_type_pattern_type_mismatch,none,
-      "type %0 of pattern does not match deduced type %1", (Type, Type))
-ERROR(nominal_type_pattern_property_not_found,none,
-      "property '%0' not found in type %1", (StringRef, Type))
-ERROR(nominal_type_pattern_property_ambiguous,none,
-      "property name '%0' in type %1 is ambiguous", (StringRef, Type))
-ERROR(nominal_type_pattern_not_property,none,
-      "member '%0' of type %1 is not a property", (StringRef, Type))
-ERROR(nominal_type_pattern_static_property,none,
-      "cannot match type property '%0' of type %1 in a 'case' pattern",
-      (StringRef, Type))
-ERROR(nominal_type_subpattern_without_property_name,none,
-      "subpattern of a struct or class pattern must have a keyword name", ())
 ERROR(ambiguous_enum_pattern_type,none,
       "generic enum type %0 is ambiguous without explicit generic parameters "
       "when matching value of type %1", (Type, Type))
@@ -2661,6 +2744,10 @@ ERROR(objc_in_extension_context,none,
       "members of constrained extensions cannot be declared @objc", ())
 ERROR(objc_in_generic_extension,none,
       "@objc is not supported within extensions of generic classes", ())
+ERROR(objc_operator, none,
+      "operator methods cannot be declared @objc", ())
+ERROR(objc_operator_proto, none,
+      "@objc protocols may not have operator requirements", ())
 
 ERROR(objc_for_generic_class,none,
       "generic subclasses of '@objc' classes cannot have an explicit '@objc' "
@@ -2718,6 +2805,9 @@ NOTE(not_objc_empty_protocol_composition,none,
      "'Any' is not considered '@objc'; use 'AnyObject' instead", ())
 NOTE(not_objc_protocol,none,
      "protocol %0 is not '@objc'", (Type))
+NOTE(not_objc_error_protocol_composition,none,
+     "protocol composition involving 'Error' cannot be represented "
+     "in Objective-C", ())
 NOTE(not_objc_empty_tuple,none,
       "empty tuple type cannot be represented in Objective-C", ())
 NOTE(not_objc_tuple,none,

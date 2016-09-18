@@ -692,7 +692,7 @@ struct ASTNodeBase {};
       if (D->hasAccessibility()) {
         PrettyStackTraceDecl debugStack("verifying access", D);
         if (D->getFormalAccessScope() == nullptr &&
-            D->getFormalAccess() != Accessibility::Public) {
+            D->getFormalAccess() < Accessibility::Public) {
           Out << "non-public decl has no formal access scope\n";
           D->dump(Out);
           abort();
@@ -1212,6 +1212,33 @@ struct ASTNodeBase {};
       }
 
       checkTrivialSubtype(srcTy, destTy, "DerivedToBaseExpr");
+      verifyCheckedBase(E);
+    }
+
+    void verifyChecked(AnyHashableErasureExpr *E) {
+      auto anyHashableDecl = Ctx.getAnyHashableDecl();
+      if (!anyHashableDecl) {
+        Out << "AnyHashable declaration could not be found\n";
+        abort();
+      }
+
+      auto hashableDecl = Ctx.getProtocol(KnownProtocolKind::Hashable);
+      if (!hashableDecl) {
+        Out << "Hashable declaration could not be found\n";
+        abort();
+      }
+
+      checkSameType(E->getType(), anyHashableDecl->getDeclaredType(),
+                    "AnyHashableErasureExpr and the standard AnyHashable type");
+
+      if (E->getConformance().getRequirement() != hashableDecl) {
+        Out << "conformance on AnyHashableErasureExpr was not for Hashable\n";
+        E->getConformance().dump();
+        abort();
+      }
+
+      verifyConformance(E->getSubExpr()->getType(), E->getConformance());
+
       verifyCheckedBase(E);
     }
 
@@ -1793,6 +1820,32 @@ struct ASTNodeBase {};
         Out << " doesn't have a complete set of protocols\n";
         abort();
       }      
+    }
+
+    /// Verify that the given conformance makes sense for the given
+    /// type.
+    void verifyConformance(Type type, ProtocolConformanceRef conformance) {
+      if (conformance.isAbstract()) {
+        if (!type->is<ArchetypeType>() && !type->isAnyExistentialType()) {
+          Out << "type " << type
+              << " should not have an abstract conformance to "
+              << conformance.getRequirement()->getName();
+          abort();
+        }
+
+        return;
+      }
+
+      if (type->getCanonicalType() !=
+            conformance.getConcrete()->getType()->getCanonicalType()) {
+        Out << "conforming type does not match conformance\n";
+        Out << "conforming type:\n";
+        type.dump(Out, 2);
+        Out << "\nconformance:\n";
+        conformance.getConcrete()->dump(Out, 2);
+        Out << "\n";
+        abort();
+      }
     }
 
     /// Check the given explicit protocol conformance.

@@ -44,6 +44,7 @@ class TypeChecker;
 
 namespace constraints {
   enum class ConstraintKind : char;
+  enum class SolutionKind : char;
   class ConstraintSystem;
   class Solution;
 }
@@ -375,6 +376,9 @@ enum TypeResolutionFlags : unsigned {
 
   /// Whether this is the type of an editor placeholder.
   TR_EditorPlaceholder = 0x200000,
+
+  /// Whether we are in a type argument for an optional
+  TR_ImmediateOptionalTypeArgument = 0x400000,
 };
 
 /// Option set describing how type resolution should work.
@@ -391,6 +395,7 @@ withoutContext(TypeResolutionOptions options) {
   options -= TR_ImmediateFunctionInput;
   options -= TR_FunctionInput;
   options -= TR_EnumCase;
+  options -= TR_ImmediateOptionalTypeArgument;
   return options;
 }
 
@@ -740,6 +745,8 @@ public:
                    UnsatisfiedDependency *unsatisfiedDependency = nullptr);
 
   void validateDecl(ValueDecl *D, bool resolveTypeParams = false);
+  void validateDecl(OperatorDecl *decl);
+  void validateDecl(PrecedenceGroupDecl *decl);
 
   /// Resolves the accessibility of the given declaration.
   void validateAccessibility(ValueDecl *D);
@@ -1376,7 +1383,8 @@ public:
   /// \returns true if an error occurred, false otherwise.
   bool coercePatternToType(Pattern *&P, DeclContext *dc, Type type,
                            TypeResolutionOptions options,
-                           GenericTypeResolver *resolver = nullptr);
+                           GenericTypeResolver *resolver = nullptr,
+                           TypeLoc tyLoc = TypeLoc());
   bool typeCheckExprPattern(ExprPattern *EP, DeclContext *DC,
                             Type type);
 
@@ -1581,14 +1589,14 @@ public:
   /// Find the @objc requirement that are witnessed by the given
   /// declaration.
   ///
-  /// \param onlyFirstRequirement If true, only returns the first such
-  /// requirement, rather than all of them.
+  /// \param anySingleRequirement If true, returns at most a single requirement,
+  /// which might be any of the requirements that match.
   ///
   /// \returns the set of requirements to which the given witness is a
   /// witness.
   llvm::TinyPtrVector<ValueDecl *> findWitnessedObjCRequirements(
                                      const ValueDecl *witness,
-                                     bool onlyFirstRequirement);
+                                     bool anySingleRequirement = false);
 
   /// Mark any _ObjectiveCBridgeable conformances in the given type as "used".
   void useObjectiveCBridgeableConformances(DeclContext *dc, Type type);
@@ -1675,6 +1683,14 @@ public:
                                   NameLookupOptions options
                                     = defaultConstructorLookupOptions);
 
+  /// Given an expression that's known to be an infix operator,
+  /// look up its precedence group.
+  PrecedenceGroupDecl *
+  lookupPrecedenceGroupForInfixOperator(DeclContext *dc, Expr *op);
+
+  PrecedenceGroupDecl *lookupPrecedenceGroup(DeclContext *dc, Identifier name,
+                                             SourceLoc nameLoc);
+
   /// \brief Look up the Bool type in the standard library.
   Type lookupBoolType(const DeclContext *dc);
 
@@ -1728,7 +1744,8 @@ public:
   /// the given set of declarations.
   Expr *buildRefExpr(ArrayRef<ValueDecl *> Decls, DeclContext *UseDC,
                      DeclNameLoc NameLoc, bool Implicit,
-                     bool isSpecialized = false);
+                     bool isSpecialized,
+                     FunctionRefKind functionRefKind);
   /// @}
 
   /// \brief Retrieve a specific, known protocol.

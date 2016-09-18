@@ -1,4 +1,4 @@
-// RUN: %target-swift-frontend -emit-silgen -sdk %S/Inputs -I %S/Inputs -enable-source-import %s | FileCheck %s
+// RUN: %target-swift-frontend -emit-silgen -sdk %S/Inputs -I %S/Inputs -enable-source-import %s | %FileCheck %s
 
 // REQUIRES: objc_interop
 
@@ -19,10 +19,6 @@ class BridgedObjC : NSObject { }
 func == (x: BridgedObjC, y: BridgedObjC) -> Bool { return true }
 
 struct BridgedSwift : Hashable, _ObjectiveCBridgeable {
-  static func _isBridgedToObjectiveC() -> Bool {
-    return true
-  }
-  
   var hashValue: Int { return 0 }
 
   func _bridgeToObjectiveC() -> BridgedObjC {

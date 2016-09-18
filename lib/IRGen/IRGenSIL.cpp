@@ -19,6 +19,7 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/ADT/MapVector.h"
@@ -97,32 +98,6 @@ public:
   const ForeignFunctionInfo &getForeignInfo() const { return ForeignInfo; }
   
   llvm::Value *getExplosionValue(IRGenFunction &IGF) const;
-};
-  
-/// Represents an ObjC method reference that will be invoked by a form of
-/// objc_msgSend.
-class ObjCMethod {
-  /// The SILDeclRef declaring the method.
-  SILDeclRef method;
-  /// For a bounded call, the static type that provides the lower bound for
-  /// the search. Null for unbounded calls that will look for the method in
-  /// the dynamic type of the object.
-  llvm::PointerIntPair<SILType, 1, bool> searchTypeAndSuper;
-
-public:
-  ObjCMethod(SILDeclRef method, SILType searchType, bool startAtSuper)
-    : method(method), searchTypeAndSuper(searchType, startAtSuper)
-  {}
-  
-  SILDeclRef getMethod() const { return method; }
-  SILType getSearchType() const { return searchTypeAndSuper.getPointer(); }
-  bool shouldStartAtSuper() const { return searchTypeAndSuper.getInt(); }
-  
-  /// FIXME: Thunk down to a Swift function value?
-  llvm::Value *getExplosionValue(IRGenFunction &IGF) const {
-    llvm_unreachable("thunking unapplied objc method to swift function "
-                     "not yet implemented");
-  }
 };
   
 /// Represents a SIL value lowered to IR, in one of these forms:
@@ -587,17 +562,20 @@ public:
   void emitDebugVariableRangeExtension(const SILBasicBlock *CurBB) {
     if (IGM.IRGen.Opts.Optimize)
       return;
-    for (auto &Variable : ValueVariables) {
+    for (auto &Variable : reversed(ValueVariables)) {
       auto VarDominancePoint = Variable.first;
       llvm::Value *Storage = Variable.second;
       if (getActiveDominancePoint() == VarDominancePoint ||
           isActiveDominancePointDominatedBy(VarDominancePoint)) {
         llvm::Type *ArgTys;
-        auto *Ty = Storage->getType()->getScalarType();
-        // Pointers and Floats are expected to fit into a register.
-        if (Ty->isPointerTy() || Ty->isFloatingPointTy())
-          ArgTys = { Storage->getType() };
+        auto *Ty = Storage->getType();
+        // Vectors, Pointers and Floats are expected to fit into a register.
+        if (Ty->isPointerTy() || Ty->isFloatingPointTy() || Ty->isVectorTy())
+          ArgTys = { Ty };
         else {
+          // If this is not a scalar or vector type, we can't handle it.
+          if (isa<llvm::CompositeType>(Ty))
+            continue;
           // The storage is guaranteed to be no larger than the register width.
           // Extend the storage so it would fit into a register.
           llvm::Type *IntTy;
@@ -613,6 +591,24 @@ public:
         auto *AsmFnTy = llvm::FunctionType::get(IGM.VoidTy, ArgTys, false);
         auto *InlineAsm = llvm::InlineAsm::get(AsmFnTy, "", "r", true);
         Builder.CreateCall(InlineAsm, Storage);
+        // Propagate the dbg.value intrinsics into the later basic blocks.  Note
+        // that this shouldn't be necessary. LiveDebugValues should be doing
+        // this but can't in general because it currently only tracks register
+        // locations.
+        auto It = llvm::BasicBlock::iterator(Variable.second);
+        auto *BB = Variable.second->getParent();
+        auto *CurBB = Builder.GetInsertBlock();
+        if (BB != CurBB)
+          for (auto I = std::next(It), E = BB->end(); I != E; ++I) {
+            auto *DVI = dyn_cast<llvm::DbgValueInst>(I);
+            if (DVI && DVI->getValue() == Variable.second)
+              IGM.DebugInfo->getBuilder().insertDbgValueIntrinsic(
+                  DVI->getValue(), 0, DVI->getVariable(), DVI->getExpression(),
+                  DVI->getDebugLoc(), &*CurBB->getFirstInsertionPt());
+            else
+              // Found all dbg.value instrinsics describing this location.
+              break;
+        }
       }
     }
   }
@@ -704,6 +700,7 @@ public:
     Alignment align(layout->getAlignment());
 
     auto alloca = createAlloca(aggregateType, align, Name + ".debug");
+    ArtificialLocation AutoRestore(getDebugScope(), IGM.DebugInfo, Builder);
     size_t i = 0;
     for (auto val : vals) {
       auto addr = Builder.CreateStructGEP(alloca, i,
@@ -727,8 +724,10 @@ public:
     // Force all archetypes referenced by the type to be bound by this point.
     // TODO: just make sure that we have a path to them that the debug info
     //       can follow.
-    if (!IGM.IRGen.Opts.Optimize && Ty.getType()->hasArchetype())
-      Ty.getType()->getCanonicalType().visit([&](Type t) {
+    auto runtimeTy = getRuntimeReifiedType(IGM,
+                                           Ty.getType()->getCanonicalType());
+    if (!IGM.IRGen.Opts.Optimize && runtimeTy->hasArchetype())
+      runtimeTy.visit([&](Type t) {
         if (auto archetype = dyn_cast<ArchetypeType>(CanType(t)))
           emitTypeMetadataRef(archetype);
        });
@@ -1589,9 +1588,9 @@ void IRGenSILFunction::visitSILBasicBlock(SILBasicBlock *BB) {
           ArgsEmitted = true;
         }
       }
+      if (isa<TermInst>(&I))
+        emitDebugVariableRangeExtension(BB);
     }
-    if (isa<TermInst>(&I))
-      emitDebugVariableRangeExtension(BB);
     visit(&I);
 
     assert(!EmissionNotes.count(&I) &&
@@ -1894,10 +1893,7 @@ static CallEmission getCallEmissionForLoweredValue(IRGenSILFunction &IGF,
   case LoweredValue::Kind::ObjCMethod: {
     assert(selfValue);
     auto &objcMethod = lv.getObjCMethod();
-    ObjCMessageKind kind = ObjCMessageKind::Normal;
-    if (objcMethod.getSearchType())
-      kind = objcMethod.shouldStartAtSuper()? ObjCMessageKind::Super
-                                            : ObjCMessageKind::Peer;
+    ObjCMessageKind kind = objcMethod.getMessageKind();
 
     CallEmission emission =
       prepareObjCMethodRootCall(IGF, objcMethod.getMethod(),
@@ -2220,7 +2216,7 @@ void IRGenSILFunction::visitPartialApplyInst(swift::PartialApplyInst *i) {
     
     Explosion function;
     emitObjCPartialApplication(*this,
-                               objcMethod.getMethod(),
+                               objcMethod,
                                i->getOrigCalleeType(),
                                i->getType().castTo<SILFunctionType>(),
                                selfVal,
@@ -4629,19 +4625,21 @@ void IRGenSILFunction::visitCondFailInst(swift::CondFailInst *i) {
   Builder.CreateCondBr(cond, failBB, contBB);
   Builder.emitBlock(failBB);
 
-  // Emit unique side-effecting inline asm calls in order to eliminate
-  // the possibility that an LLVM optimization or code generation pass
-  // will merge these blocks back together again. We emit an empty asm
-  // string with the side-effect flag set, and with a unique integer
-  // argument for each cond_fail we see in the function.
-  llvm::IntegerType *asmArgTy = IGM.Int32Ty;
-  llvm::Type *argTys = { asmArgTy };
-  llvm::FunctionType *asmFnTy =
-    llvm::FunctionType::get(IGM.VoidTy, argTys, false /* = isVarArg */);
-  llvm::InlineAsm *inlineAsm =
-    llvm::InlineAsm::get(asmFnTy, "", "n", true /* = SideEffects */);
-  Builder.CreateCall(inlineAsm,
-                     llvm::ConstantInt::get(asmArgTy, NumCondFails++));
+  if (IGM.IRGen.Opts.Optimize) {
+    // Emit unique side-effecting inline asm calls in order to eliminate
+    // the possibility that an LLVM optimization or code generation pass
+    // will merge these blocks back together again. We emit an empty asm
+    // string with the side-effect flag set, and with a unique integer
+    // argument for each cond_fail we see in the function.
+    llvm::IntegerType *asmArgTy = IGM.Int32Ty;
+    llvm::Type *argTys = { asmArgTy };
+    llvm::FunctionType *asmFnTy =
+      llvm::FunctionType::get(IGM.VoidTy, argTys, false /* = isVarArg */);
+    llvm::InlineAsm *inlineAsm =
+      llvm::InlineAsm::get(asmFnTy, "", "n", true /* = SideEffects */);
+    Builder.CreateCall(inlineAsm,
+                       llvm::ConstantInt::get(asmArgTy, NumCondFails++));
+  }
 
   // Emit the trap instruction.
   llvm::Function *trapIntrinsic =

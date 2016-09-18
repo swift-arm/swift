@@ -20,23 +20,24 @@ import SwiftShims
 ///
 /// You can send the output of the standard library's `print(_:to:)` and
 /// `dump(_:to:)` functions to an instance of a type that conforms to the
-/// `TextOutputStream` protocol instead of to standard output. Swift's `String`
-/// type conforms to `TextOutputStream` already, so you can capture the output
-/// from `print(_:to:)` and `dump(_:to:)` in a string instead of logging it to
-/// standard output.
+/// `TextOutputStream` protocol instead of to standard output. Swift's
+/// `String` type conforms to `TextOutputStream` already, so you can capture
+/// the output from `print(_:to:)` and `dump(_:to:)` in a string instead of
+/// logging it to standard output.
 ///
 ///     var s = ""
-///     for n in 1 ... 5 {
+///     for n in 1...5 {
 ///         print(n, terminator: "", to: &s)
 ///     }
 ///     // s == "12345"
 ///
 /// Conforming to the TextOutputStream Protocol
-/// =======================================
+/// ===========================================
 ///
-/// To make your custom type conform to the `TextOutputStream` protocol, implement
-/// the required `write(_:)` method. Functions that use an `TextOutputStream`
-/// target may call `write(_:)` multiple times per writing operation.
+/// To make your custom type conform to the `TextOutputStream` protocol,
+/// implement the required `write(_:)` method. Functions that use a
+/// `TextOutputStream` target may call `write(_:)` multiple times per writing
+/// operation.
 ///
 /// As an example, here's an implementation of an output stream that converts
 /// any input to its plain ASCII representation before sending it to standard
@@ -80,31 +81,36 @@ extension TextOutputStream {
 
 /// A source of text-streaming operations.
 ///
-/// Instances of types that conform to the `Streamable` protocol can write
-/// their value to instances of any type that conforms to the `TextOutputStream`
-/// protocol. The Swift standard library's text-related types, `String`,
-/// `Character`, and `UnicodeScalar`, all conform to `Streamable`.
+/// Instances of types that conform to the `TextOutputStreamable` protocol can
+/// write their value to instances of any type that conforms to the
+/// `TextOutputStream` protocol. The Swift standard library's text-related
+/// types, `String`, `Character`, and `UnicodeScalar`, all conform to
+/// `TextOutputStreamable`.
 ///
-/// Conforming to the Streamable Protocol
+/// Conforming to the TextOutputStreamable Protocol
 /// =====================================
 ///
-/// To add `Streamable` conformance to a custom type, implement the required
-/// `write(to:)` method. Call the given output stream's `write(_:)` method in
-/// your implementation.
-public protocol Streamable {
+/// To add `TextOutputStreamable` conformance to a custom type, implement the
+/// required `write(to:)` method. Call the given output stream's `write(_:)`
+/// method in your implementation.
+public protocol TextOutputStreamable {
   /// Writes a textual representation of this instance into the given output
   /// stream.
   func write<Target : TextOutputStream>(to target: inout Target)
 }
 
+ @available(*, unavailable, renamed: "TextOutputStreamable")
+public typealias Streamable = TextOutputStreamable
+
 /// A type with a customized textual representation.
 ///
 /// Types that conform to the `CustomStringConvertible` protocol can provide
 /// their own representation to be used when converting an instance to a
-/// string. The `String(_:)` initializer is the preferred way to convert an
-/// instance of *any* type to a string. If the passed instance conforms to
-/// `CustomStringConvertible`, the `String(_:)` initializer and the
-/// `print(_:)` function use the instance's custom `description` property.
+/// string. The `String(describing:)` initializer is the preferred way to
+/// convert an instance of *any* type to a string. If the passed instance
+/// conforms to `CustomStringConvertible`, the `String(describing:)`
+/// initializer and the `print(_:)` function use the instance's custom
+/// `description` property.
 ///
 /// Accessing a type's `description` property directly or using
 /// `CustomStringConvertible` as a generic constraint is discouraged.
@@ -144,7 +150,8 @@ public protocol CustomStringConvertible {
   /// A textual representation of this instance.
   ///
   /// Instead of accessing this property directly, convert an instance of any
-  /// type to a string by using the `String(_:)` initializer. For example:
+  /// type to a string by using the `String(describing:)` initializer. For
+  /// example:
   ///
   ///     struct Point: CustomStringConvertible {
   ///         let x: Int, y: Int
@@ -155,13 +162,27 @@ public protocol CustomStringConvertible {
   ///     }
   ///
   ///     let p = Point(x: 21, y: 30)
-  ///     let s = String(p)
+  ///     let s = String(describing: p)
   ///     print(s)
   ///     // Prints "(21, 30)"
   ///
   /// The conversion of `p` to a string in the assignment to `s` uses the
   /// `Point` type's `description` property.
   var description: String { get }
+}
+
+/// A type that can be represented as a string in a lossless, unambiguous way.
+///
+/// For example, the integer value 1050 can be represented in its entirety as
+/// the string "1050".
+///
+/// The description property of a conforming type must be a value-preserving
+/// representation of the original value. As such, it should be possible to
+/// re-create an instance from its string representation.
+public protocol LosslessStringConvertible : CustomStringConvertible {
+  /// Instantiates an instance of the conforming type from a string
+  /// representation.
+  init?(_ description: String)
 }
 
 /// A type with a customized textual representation suitable for debugging
@@ -324,12 +345,12 @@ internal func _print_unlocked<T, TargetStream : TextOutputStream>(
   // string. Check for Optional first, before checking protocol
   // conformance below, because an Optional value is convertible to a
   // protocol if its wrapped type conforms to that protocol.
-  if _isOptional(value.dynamicType) {
+  if _isOptional(type(of: value)) {
     let debugPrintable = value as! CustomDebugStringConvertible
     debugPrintable.debugDescription.write(to: &target)
     return
   }
-  if case let streamableObject as Streamable = value {
+  if case let streamableObject as TextOutputStreamable = value {
     streamableObject.write(to: &target)
     return
   }
@@ -356,7 +377,7 @@ internal func _print_unlocked<T, TargetStream : TextOutputStream>(
 /// This function is forbidden from being inlined because when building the
 /// standard library inlining makes us drop the special semantics.
 @inline(never) @effects(readonly)
-func _toStringReadOnlyStreamable<T : Streamable>(_ x: T) -> String {
+func _toStringReadOnlyStreamable<T : TextOutputStreamable>(_ x: T) -> String {
   var result = ""
   x.write(to: &result)
   return result
@@ -385,7 +406,7 @@ public func _debugPrint_unlocked<T, TargetStream : TextOutputStream>(
     return
   }
 
-  if let streamableObject = value as? Streamable {
+  if let streamableObject = value as? TextOutputStreamable {
     streamableObject.write(to: &target)
     return
   }
@@ -398,7 +419,8 @@ internal func _dumpPrint_unlocked<T, TargetStream : TextOutputStream>(
     _ value: T, _ mirror: Mirror, _ target: inout TargetStream
 ) {
   if let displayStyle = mirror.displayStyle {
-    // Containers and tuples are always displayed in terms of their element count
+    // Containers and tuples are always displayed in terms of their element
+    // count
     switch displayStyle {
     case .tuple:
       let count = mirror.children.count
@@ -431,7 +453,7 @@ internal func _dumpPrint_unlocked<T, TargetStream : TextOutputStream>(
     return
   }
 
-  if let streamableObject = value as? Streamable {
+  if let streamableObject = value as? TextOutputStreamable {
     streamableObject.write(to: &target)
     return
   }
@@ -502,7 +524,7 @@ extension String : TextOutputStream {
 // Streamables
 //===----------------------------------------------------------------------===//
 
-extension String : Streamable {
+extension String : TextOutputStreamable {
   /// Writes the string into the given output stream.
   /// 
   /// - Parameter target: An output stream.
@@ -511,7 +533,7 @@ extension String : Streamable {
   }
 }
 
-extension Character : Streamable {
+extension Character : TextOutputStreamable {
   /// Writes the character into the given output stream.
   ///
   /// - Parameter target: An output stream.
@@ -520,7 +542,7 @@ extension Character : Streamable {
   }
 }
 
-extension UnicodeScalar : Streamable {
+extension UnicodeScalar : TextOutputStreamable {
   /// Writes the textual representation of the Unicode scalar into the given
   /// output stream.
   ///
@@ -551,7 +573,7 @@ internal struct _TeeStream<
 @available(*, unavailable, renamed: "TextOutputStream")
 public typealias OutputStreamType = TextOutputStream
 
-extension Streamable {
+extension TextOutputStreamable {
   @available(*, unavailable, renamed: "write(to:)")
   public func writeTo<Target : TextOutputStream>(_ target: inout Target) {
     Builtin.unreachable()

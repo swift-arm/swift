@@ -120,9 +120,9 @@ var wcurried1 = w.curried
 var wcurried2 = w.curried(0)
 var wcurriedFull : () = w.curried(0)(1)
 
-// Member of enum Type
+// Member of enum type
 func enumMetatypeMember(_ opt: Int?) {
-  opt.none // expected-error{{static member 'none' cannot be used on instance of type 'Int?'}}
+  opt.none // expected-error{{enum element 'none' cannot be referenced as an instance member}}
 }
 
 ////
@@ -258,7 +258,7 @@ func existential(_ p: P) {
   let _: () = id(p.bar(0))
 
   // Static member of existential metatype)
-  let _: () -> () = id(p.dynamicType.tum)
+  let _: () -> () = id(type(of: p).tum)
 
   // Instance member of extension returning Self
   let _: () -> P = id(p.returnSelfInstance)
@@ -310,6 +310,10 @@ protocol StaticP {
 extension StaticP {
   func bar() {
     _ = StaticP.foo(a:) // expected-error{{static member 'foo(a:)' cannot be used on protocol metatype 'StaticP.Protocol'}} {{9-16=Self}}
+
+    func nested() {
+      _ = StaticP.foo(a:) // expected-error{{static member 'foo(a:)' cannot be used on protocol metatype 'StaticP.Protocol'}} {{11-18=Self}}
+    }
   }
 }
 
@@ -333,7 +337,7 @@ protocol Functional {
   func apply(_ v: Vector) -> Scalar
 }
 protocol Coalgebra {
-  func coproduct(_ f: Functional) -> (v1: Vector, v2: Vector) -> Scalar
+  func coproduct(_ f: Functional) -> (_ v1: Vector, _ v2: Vector) -> Scalar
 }
 
 // Make sure existential is closed early when we partially apply
@@ -553,7 +557,7 @@ enum SomeErrorType {
 
   static func someErrorFromString(_ str: String) -> SomeErrorType? {
     if str == "standalone" { return .StandaloneError }
-    if str == "underlying" { return .UnderlyingError }  // expected-error {{contextual member 'UnderlyingError' expects argument of type 'String'}}
+    if str == "underlying" { return .UnderlyingError }  // expected-error {{member 'UnderlyingError' expects argument of type 'String'}}
     return nil
   }
 }

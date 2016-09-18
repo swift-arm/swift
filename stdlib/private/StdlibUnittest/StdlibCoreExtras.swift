@@ -97,7 +97,7 @@ public final class Box<T> {
   public var value: T
 }
 
-infix operator <=> {}
+infix operator <=>
 
 public func <=> <T: Comparable>(lhs: T, rhs: T) -> ExpectedComparisonResult {
   return lhs < rhs
@@ -127,7 +127,7 @@ public func == (lhs: TypeIdentifier, rhs: TypeIdentifier) -> Bool {
 extension TypeIdentifier
   : CustomStringConvertible, CustomDebugStringConvertible {
   public var description: String {
-    return String(value)
+    return String(describing: value)
   }
   public var debugDescription: String {
     return "TypeIdentifier(\(description))"

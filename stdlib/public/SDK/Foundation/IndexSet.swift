@@ -101,12 +101,12 @@ public struct IndexSet : ReferenceConvertible, Equatable, BidirectionalCollectio
         public let startIndex : Index
         public let endIndex : Index
         
-        private var indexSet : IndexSet
+        fileprivate var indexSet : IndexSet
         
         // Range of element values
         private var intersectingRange : Range<IndexSet.Element>?
         
-        private init(indexSet : IndexSet, intersecting range : Range<IndexSet.Element>?) {
+        fileprivate init(indexSet : IndexSet, intersecting range : Range<IndexSet.Element>?) {
             self.indexSet = indexSet
             self.intersectingRange = range
             
@@ -170,12 +170,12 @@ public struct IndexSet : ReferenceConvertible, Equatable, BidirectionalCollectio
     
     /// The mechanism for accessing the integers stored in an IndexSet.
     public struct Index : CustomStringConvertible, Comparable {
-        private var value : IndexSet.Element
-        private var extent : Range<IndexSet.Element>
-        private var rangeIndex : Int
-        private let rangeCount : Int
+        fileprivate var value : IndexSet.Element
+        fileprivate var extent : Range<IndexSet.Element>
+        fileprivate var rangeIndex : Int
+        fileprivate let rangeCount : Int
         
-        private init(value: Int, extent: Range<Int>, rangeIndex: Int, rangeCount: Int) {
+        fileprivate init(value: Int, extent: Range<Int>, rangeIndex: Int, rangeCount: Int) {
             self.value = value
             self.extent = extent
             self.rangeCount = rangeCount
@@ -190,7 +190,7 @@ public struct IndexSet : ReferenceConvertible, Equatable, BidirectionalCollectio
     public typealias ReferenceType = NSIndexSet
     public typealias Element = Int
     
-    private var _handle: _MutablePairHandle<NSIndexSet, NSMutableIndexSet>
+    fileprivate var _handle: _MutablePairHandle<NSIndexSet, NSMutableIndexSet>
     
     /// Initialize an `IndexSet` with a range of integers.
     public init(integersIn range: Range<Element>) {
@@ -327,29 +327,29 @@ public struct IndexSet : ReferenceConvertible, Equatable, BidirectionalCollectio
         return _handle.map { _toOptional($0.lastIndex) }
     }
     
-    /// Returns an integer contained in `self` which is greater than `integer`.
-    public func integerGreaterThan(_ integer: Element) -> Element {
-        return _handle.map { $0.indexGreaterThanIndex(integer) }
+    /// Returns an integer contained in `self` which is greater than `integer`, or `nil` if a result could not be found.
+    public func integerGreaterThan(_ integer: Element) -> Element? {
+        return _handle.map { _toOptional($0.indexGreaterThanIndex(integer)) }
     }
     
-    /// Returns an integer contained in `self` which is less than `integer`.
-    public func integerLessThan(_ integer: Element) -> Element {
-        return _handle.map { $0.indexLessThanIndex(integer) }
+    /// Returns an integer contained in `self` which is less than `integer`, or `nil` if a result could not be found.
+    public func integerLessThan(_ integer: Element) -> Element? {
+        return _handle.map { _toOptional($0.indexLessThanIndex(integer)) }
     }
     
-    /// Returns an integer contained in `self` which is greater than or equal to `integer`.
-    public func integerGreaterThanOrEqualTo(_ integer: Element) -> Element {
-        return _handle.map { $0.indexGreaterThanOrEqual(to: integer) }
+    /// Returns an integer contained in `self` which is greater than or equal to `integer`, or `nil` if a result could not be found.
+    public func integerGreaterThanOrEqualTo(_ integer: Element) -> Element? {
+        return _handle.map { _toOptional($0.indexGreaterThanOrEqual(to: integer)) }
     }
     
-    /// Returns an integer contained in `self` which is less than or equal to `integer`.
-    public func integerLessThanOrEqualTo(_ integer: Element) -> Element {
-        return _handle.map { $0.indexLessThanOrEqual(to: integer) }
+    /// Returns an integer contained in `self` which is less than or equal to `integer`, or `nil` if a result could not be found.
+    public func integerLessThanOrEqualTo(_ integer: Element) -> Element? {
+        return _handle.map { _toOptional($0.indexLessThanOrEqual(to: integer)) }
     }
     
     /// Return a `Range<IndexSet.Index>` which can be used to subscript the index set.
     ///
-    /// The resulting range is the range of the intersection of the integers in `range` with the index set.
+    /// The resulting range is the range of the intersection of the integers in `range` with the index set. The resulting range will be `isEmpty` if the intersection is empty.
     ///
     /// - parameter range: The range of integers to include.
     public func indexRange(in range: Range<Element>) -> Range<Index> {
@@ -363,9 +363,14 @@ public struct IndexSet : ReferenceConvertible, Equatable, BidirectionalCollectio
             return i..<i
         }
         
-        let resultFirst = _index(ofInteger: integerGreaterThanOrEqualTo(range.lowerBound))
-        let resultLast = _index(ofInteger: integerLessThanOrEqualTo(range.upperBound - 1))
-        return resultFirst..<index(after: resultLast)
+        if let start = integerGreaterThanOrEqualTo(range.lowerBound), let end = integerLessThanOrEqualTo(range.upperBound - 1) {
+            let resultFirst = _index(ofInteger: start)
+            let resultLast = _index(ofInteger: end)
+            return resultFirst..<index(after: resultLast)
+        } else {
+            let i = _index(ofInteger: 0)
+            return i..<i
+        }
     }
     
     /// Return a `Range<IndexSet.Index>` which can be used to subscript the index set.
@@ -675,7 +680,7 @@ public struct IndexSet : ReferenceConvertible, Equatable, BidirectionalCollectio
     ///
     /// - parameter range: A range of integers. For each integer in the range that intersects the integers in the IndexSet, then the `includeInteger` predicate will be invoked.
     /// - parameter includeInteger: The predicate which decides if an integer will be included in the result or not.
-    public func filteredIndexSet(in range : Range<Element>, includeInteger: @noescape (Element) throws -> Bool) rethrows -> IndexSet {
+    public func filteredIndexSet(in range : Range<Element>, includeInteger: (Element) throws -> Bool) rethrows -> IndexSet {
         let r : NSRange = _toNSRange(range)
         return try _handle.map {
             var error : Error? = nil
@@ -701,22 +706,22 @@ public struct IndexSet : ReferenceConvertible, Equatable, BidirectionalCollectio
     ///
     /// - parameter range: A range of integers. For each integer in the range that intersects the integers in the IndexSet, then the `includeInteger` predicate will be invoked.
     /// - parameter includeInteger: The predicate which decides if an integer will be included in the result or not.
-    public func filteredIndexSet(in range : CountableRange<Element>, includeInteger: @noescape (Element) throws -> Bool) rethrows -> IndexSet { return try self.filteredIndexSet(in: Range(range), includeInteger: includeInteger) }
+    public func filteredIndexSet(in range : CountableRange<Element>, includeInteger: (Element) throws -> Bool) rethrows -> IndexSet { return try self.filteredIndexSet(in: Range(range), includeInteger: includeInteger) }
     /// Returns an IndexSet filtered according to the result of `includeInteger`.
     ///
     /// - parameter range: A range of integers. For each integer in the range that intersects the integers in the IndexSet, then the `includeInteger` predicate will be invoked.
     /// - parameter includeInteger: The predicate which decides if an integer will be included in the result or not.
-    public func filteredIndexSet(in range : ClosedRange<Element>, includeInteger: @noescape (Element) throws -> Bool) rethrows -> IndexSet { return try self.filteredIndexSet(in: Range(range), includeInteger: includeInteger) }
+    public func filteredIndexSet(in range : ClosedRange<Element>, includeInteger: (Element) throws -> Bool) rethrows -> IndexSet { return try self.filteredIndexSet(in: Range(range), includeInteger: includeInteger) }
     /// Returns an IndexSet filtered according to the result of `includeInteger`.
     ///
     /// - parameter range: A range of integers. For each integer in the range that intersects the integers in the IndexSet, then the `includeInteger` predicate will be invoked.
     /// - parameter includeInteger: The predicate which decides if an integer will be included in the result or not.
-    public func filteredIndexSet(in range : CountableClosedRange<Element>, includeInteger: @noescape (Element) throws -> Bool) rethrows -> IndexSet { return try self.filteredIndexSet(in: Range(range), includeInteger: includeInteger) }
+    public func filteredIndexSet(in range : CountableClosedRange<Element>, includeInteger: (Element) throws -> Bool) rethrows -> IndexSet { return try self.filteredIndexSet(in: Range(range), includeInteger: includeInteger) }
     
     /// Returns an IndexSet filtered according to the result of `includeInteger`.
     ///
     /// - parameter includeInteger: The predicate which decides if an integer will be included in the result or not.
-    public func filteredIndexSet(includeInteger: @noescape (Element) throws -> Bool) rethrows -> IndexSet {
+    public func filteredIndexSet(includeInteger: (Element) throws -> Bool) rethrows -> IndexSet {
         return try self.filteredIndexSet(in: 0..<NSNotFound-1, includeInteger: includeInteger)
     }
 
@@ -724,25 +729,17 @@ public struct IndexSet : ReferenceConvertible, Equatable, BidirectionalCollectio
     public mutating func shift(startingAt integer: Element, by delta: IndexSet.IndexDistance) {
         _applyMutation { $0.shiftIndexesStarting(at: integer, by: delta) }
     }
-
-    public var description: String {
-        return _handle.map { $0.description }
-    }
-    
-    public var debugDescription: String {
-        return _handle.map { $0.debugDescription }
-    }
     
     // Temporary boxing function, until we can get a native Swift type for NSIndexSet
     @inline(__always)
-    mutating func _applyMutation<ReturnType>(_ whatToDo : @noescape (NSMutableIndexSet) throws -> ReturnType) rethrows -> ReturnType {
+    mutating func _applyMutation<ReturnType>(_ whatToDo : (NSMutableIndexSet) throws -> ReturnType) rethrows -> ReturnType {
         // This check is done twice because: <rdar://problem/24939065> Value kept live for too long causing uniqueness check to fail
         var unique = true
         switch _handle._pointer {
         case .Default(_):
             break
         case .Mutable(_):
-            unique = isUniquelyReferencedNonObjC(&_handle)
+            unique = isKnownUniquelyReferenced(&_handle)
         }
         
         switch _handle._pointer {
@@ -768,18 +765,34 @@ public struct IndexSet : ReferenceConvertible, Equatable, BidirectionalCollectio
     
     // MARK: - Bridging Support
     
-    private var reference: NSIndexSet {
+    fileprivate var reference: NSIndexSet {
         return _handle.reference
     }
     
-    private init(reference: NSIndexSet) {
+    fileprivate init(reference: NSIndexSet) {
         _handle = _MutablePairHandle(reference)
+    }
+}
+
+extension IndexSet : CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
+    public var description: String {
+        return "\(count) indexes"
+    }
+    
+    public var debugDescription: String {
+        return "\(count) indexes"
+    }
+
+    public var customMirror: Mirror {
+        var c: [(label: String?, value: Any)] = []
+        c.append((label: "ranges", value: rangeView.map { $0 }))
+        return Mirror(self, children: c, displayStyle: Mirror.DisplayStyle.struct)
     }
 }
 
 /// Iterate two index sets on the boundaries of their ranges. This is where all of the interesting stuff happens for exclusive or, intersect, etc.
 private struct IndexSetBoundaryIterator : IteratorProtocol {
-    private typealias Element = IndexSet.Element
+    typealias Element = IndexSet.Element
     
     private var i1 : IndexSet.RangeView.Iterator
     private var i2 : IndexSet.RangeView.Iterator
@@ -788,7 +801,7 @@ private struct IndexSetBoundaryIterator : IteratorProtocol {
     private var i1UsedLower : Bool
     private var i2UsedLower : Bool
     
-    private init(_ is1 : IndexSet, _ is2 : IndexSet) {
+    fileprivate init(_ is1 : IndexSet, _ is2 : IndexSet) {
         i1 = is1.rangeView.makeIterator()
         i2 = is2.rangeView.makeIterator()
         
@@ -800,7 +813,7 @@ private struct IndexSetBoundaryIterator : IteratorProtocol {
         i2UsedLower = false
     }
     
-    private mutating func next() -> Element? {
+    fileprivate mutating func next() -> Element? {
         if i1Range == nil && i2Range == nil {
             return nil
         }
@@ -876,6 +889,14 @@ extension IndexSet : _ObjectiveCBridgeable {
     
 }
 
+extension NSIndexSet : _HasCustomAnyHashableRepresentation {
+    // Must be @nonobjc to avoid infinite recursion during bridging.
+    @nonobjc
+    public func _toCustomAnyHashable() -> AnyHashable? {
+        return AnyHashable(self as IndexSet)
+    }
+}
+
 @_silgen_name("__NSIndexSetRangeCount")
 internal func __NSIndexSetRangeCount(_ indexSet: NSIndexSet) -> UInt
 
@@ -899,8 +920,9 @@ private enum _MutablePair<ImmutableType, MutableType> {
 /// A class type which acts as a handle (pointer-to-pointer) to a Foundation reference type which has both an immutable and mutable class (e.g., NSData, NSMutableData).
 ///
 /// a.k.a. Box
-private final class _MutablePairHandle<ImmutableType : NSObject, MutableType : NSObject where ImmutableType : NSMutableCopying, MutableType : NSMutableCopying> {
-    private var _pointer: _MutablePair<ImmutableType, MutableType>
+private final class _MutablePairHandle<ImmutableType : NSObject, MutableType : NSObject>
+  where ImmutableType : NSMutableCopying, MutableType : NSMutableCopying {
+    fileprivate var _pointer: _MutablePair<ImmutableType, MutableType>
     
     /// Initialize with an immutable reference instance.
     ///
@@ -928,7 +950,7 @@ private final class _MutablePairHandle<ImmutableType : NSObject, MutableType : N
     
     /// Apply a closure to the reference type, regardless if it is mutable or immutable.
     @inline(__always)
-    func map<ReturnType>(_ whatToDo : @noescape (ImmutableType) throws -> ReturnType) rethrows -> ReturnType {
+    func map<ReturnType>(_ whatToDo : (ImmutableType) throws -> ReturnType) rethrows -> ReturnType {
         switch _pointer {
         case .Default(let i):
             return try whatToDo(i)

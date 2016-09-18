@@ -111,8 +111,8 @@ struct _SliceBuffer<Element> : _ArrayBufferProtocol, RandomAccessCollection {
   /// A value that identifies the storage used by the buffer.  Two
   /// buffers address the same elements when they have the same
   /// identity and count.
-  public var identity: UnsafePointer<Void> {
-    return UnsafePointer(firstElementAddress)
+  public var identity: UnsafeRawPointer {
+    return UnsafeRawPointer(firstElementAddress)
   }
 
   /// An object that keeps the elements stored in this buffer alive.
@@ -235,11 +235,11 @@ struct _SliceBuffer<Element> : _ArrayBufferProtocol, RandomAccessCollection {
   }
 
   mutating func isUniquelyReferenced() -> Bool {
-    return isUniquelyReferencedNonObjC(&owner)
+    return isKnownUniquelyReferenced(&owner)
   }
 
   mutating func isUniquelyReferencedOrPinned() -> Bool {
-    return isUniquelyReferencedOrPinnedNonObjC(&owner)
+    return _isKnownUniquelyReferencedOrPinned(&owner)
   }
 
   @_versioned
@@ -307,7 +307,7 @@ struct _SliceBuffer<Element> : _ArrayBufferProtocol, RandomAccessCollection {
   /// underlying contiguous storage.
   public
   func withUnsafeBufferPointer<R>(
-    _ body: @noescape (UnsafeBufferPointer<Element>) throws -> R
+    _ body: (UnsafeBufferPointer<Element>) throws -> R
   ) rethrows -> R {
     defer { _fixLifetime(self) }
     return try body(UnsafeBufferPointer(start: firstElementAddress,
@@ -318,7 +318,7 @@ struct _SliceBuffer<Element> : _ArrayBufferProtocol, RandomAccessCollection {
   /// over the underlying contiguous storage.
   public
   mutating func withUnsafeMutableBufferPointer<R>(
-    _ body: @noescape (UnsafeMutableBufferPointer<Element>) throws -> R
+    _ body: (UnsafeMutableBufferPointer<Element>) throws -> R
   ) rethrows -> R {
     defer { _fixLifetime(self) }
     return try body(

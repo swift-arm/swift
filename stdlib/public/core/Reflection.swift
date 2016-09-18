@@ -18,30 +18,59 @@ public struct ObjectIdentifier : Hashable {
   internal let _value: Builtin.RawPointer
 
   // FIXME: Better hashing algorithm
-  /// The hash value.
+  /// The identifier's hash value.
   ///
-  /// **Axiom:** `x == y` implies `x.hashValue == y.hashValue`.
+  /// The hash value is not guaranteed to be stable across different
+  /// invocations of the same program.  Do not persist the hash value across
+  /// program runs.
   ///
-  /// - Note: The hash value is not guaranteed to be stable across
-  ///   different invocations of the same program.  Do not persist the
-  ///   hash value across program runs.
+  /// - SeeAlso: `Hashable`
   public var hashValue: Int {
     return Int(Builtin.ptrtoint_Word(_value))
   }
 
-  /// Construct an instance that uniquely identifies the class instance `x`.
+  /// Creates an instance that uniquely identifies the given class instance.
+  ///
+  /// The following example creates an example class `A` and compares instances
+  /// of the class using their object identifiers and the identical-to
+  /// operator (`===`):
+  ///
+  ///     class IntegerRef {
+  ///         let value: Int
+  ///         init(_ value: Int) {
+  ///             self.value = value
+  ///         }
+  ///     }
+  ///
+  ///     let x = IntegerRef(10)
+  ///     let y = x
+  ///
+  ///     print(ObjectIdentifier(x) == ObjectIdentifier(y))
+  ///     // Prints "true"
+  ///     print(x === y)
+  ///     // Prints "true"
+  ///
+  ///     let z = IntegerRef(10)
+  ///     print(ObjectIdentifier(x) == ObjectIdentifier(z))
+  ///     // Prints "false"
+  ///     print(x === z)
+  ///     // Prints "false"
+  ///
+  /// - Parameter x: An instance of a class.
   public init(_ x: AnyObject) {
     self._value = Builtin.bridgeToRawPointer(x)
   }
 
-  /// Construct an instance that uniquely identifies the metatype `x`.
+  /// Creates an instance that uniquely identifies the given metatype.
+  ///
+  /// - Parameter: A metatype.
   public init(_ x: Any.Type) {
     self._value = unsafeBitCast(x, to: Builtin.RawPointer.self)
   }
 }
 
 extension ObjectIdentifier : CustomDebugStringConvertible {
-  /// A textual representation of `self`, suitable for debugging.
+  /// A textual representation of the identifier, suitable for debugging.
   public var debugDescription: String {
     return "ObjectIdentifier(\(_rawPointerToString(_value)))"
   }
@@ -58,14 +87,16 @@ extension ObjectIdentifier : Comparable {
 }
 
 extension UInt {
-  /// Create a `UInt` that captures the full value of `objectID`.
+  /// Creates an integer that captures the full value of the given object
+  /// identifier.
   public init(bitPattern objectID: ObjectIdentifier) {
     self.init(Builtin.ptrtoint_Word(objectID._value))
   }
 }
 
 extension Int {
-  /// Create an `Int` that captures the full value of `objectID`.
+  /// Creates an integer that captures the full value of the given object
+  /// identifier.
   public init(bitPattern objectID: ObjectIdentifier) {
     self.init(bitPattern: UInt(bitPattern: objectID))
   }
@@ -103,7 +134,7 @@ public protocol _Mirror {
   /// The instance being reflected.
   var value: Any { get }
 
-  /// Identical to `value.dynamicType`.
+  /// Identical to `type(of: value)`.
   var valueType: Any.Type { get }
 
   /// A unique identifier for `value` if it is a class instance; `nil`
@@ -140,7 +171,7 @@ func _getSummary<T>(_ out: UnsafeMutablePointer<String>, x: T) {
 @_silgen_name("swift_reflectAny")
 internal func _reflect<T>(_ x: T) -> _Mirror
 
-/// Dump an object's contents using its mirror to the specified output stream.
+/// Dumps an object's contents using its mirror to the specified output stream.
 @discardableResult
 public func dump<T, TargetStream : TextOutputStream>(
   _ value: T,
@@ -165,7 +196,7 @@ public func dump<T, TargetStream : TextOutputStream>(
   return value
 }
 
-/// Dump an object's contents using its mirror to standard output.
+/// Dumps an object's contents using its mirror to standard output.
 @discardableResult
 public func dump<T>(
   _ value: T,
@@ -214,7 +245,7 @@ internal func _dump_unlocked<TargetStream : TextOutputStream>(
   _dumpPrint_unlocked(value, mirror, &target)
 
   let id: ObjectIdentifier?
-  if value.dynamicType is AnyObject.Type {
+  if type(of: value) is AnyObject.Type {
     // Object is a class (but not an ObjC-bridged struct)
     id = ObjectIdentifier(_unsafeDowncastToAnyObject(fromAny: value))
   } else if let metatypeInstance = value as? Any.Type {
@@ -506,15 +537,15 @@ func _getClassChild<T>(_: Int, _: _MagicMirrorData) -> (T, _Mirror)
 @_silgen_name("swift_ClassMirror_quickLookObject")
 public func _swift_ClassMirror_quickLookObject(_: _MagicMirrorData) -> AnyObject
 
-@_silgen_name("swift_isKind")
-func _swift_isKind(_ object: AnyObject, of: AnyObject) -> Bool
+@_silgen_name("_swift_stdlib_NSObject_isKindOfClass")
+internal func _swift_NSObject_isImpl(_ object: AnyObject, kindOf: AnyObject) -> Bool
 
-func _isKind(_ object: AnyObject, of: String) -> Bool {
-  return _swift_isKind(object, of: _bridgeAnythingToObjectiveC(of))
+internal func _is(_ object: AnyObject, kindOf `class`: String) -> Bool {
+  return _swift_NSObject_isImpl(object, kindOf: `class` as AnyObject)
 }
 
 func _getClassPlaygroundQuickLook(_ object: AnyObject) -> PlaygroundQuickLook? {
-  if _isKind(object, of: "NSNumber") {
+  if _is(object, kindOf: "NSNumber") {
     let number: _NSNumber = unsafeBitCast(object, to: _NSNumber.self)
     switch UInt8(number.objCType[0]) {
     case UInt8(ascii: "d"):
@@ -526,22 +557,22 @@ func _getClassPlaygroundQuickLook(_ object: AnyObject) -> PlaygroundQuickLook? {
     default:
       return .int(number.longLongValue)
     }
-  } else if _isKind(object, of: "NSAttributedString") {
+  } else if _is(object, kindOf: "NSAttributedString") {
     return .attributedString(object)
-  } else if _isKind(object, of: "NSImage") ||
-            _isKind(object, of: "UIImage") ||
-            _isKind(object, of: "NSImageView") ||
-            _isKind(object, of: "UIImageView") ||
-            _isKind(object, of: "CIImage") ||
-            _isKind(object, of: "NSBitmapImageRep") {
+  } else if _is(object, kindOf: "NSImage") ||
+            _is(object, kindOf: "UIImage") ||
+            _is(object, kindOf: "NSImageView") ||
+            _is(object, kindOf: "UIImageView") ||
+            _is(object, kindOf: "CIImage") ||
+            _is(object, kindOf: "NSBitmapImageRep") {
     return .image(object)
-  } else if _isKind(object, of: "NSColor") ||
-            _isKind(object, of: "UIColor") {
+  } else if _is(object, kindOf: "NSColor") ||
+            _is(object, kindOf: "UIColor") {
     return .color(object)
-  } else if _isKind(object, of: "NSBezierPath") ||
-            _isKind(object, of: "UIBezierPath") {
+  } else if _is(object, kindOf: "NSBezierPath") ||
+            _is(object, kindOf: "UIBezierPath") {
     return .bezierPath(object)
-  } else if _isKind(object, of: "NSString") {
+  } else if _is(object, kindOf: "NSString") {
     return .text(_forceBridgeFromObjectiveC(object, String.self))
   }
 

@@ -33,7 +33,7 @@ public extension DispatchQueue {
 		@available(OSX 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
 		public static let initiallyInactive = Attributes(rawValue: 1<<2)
 
-		private func _attr() -> __OS_dispatch_queue_attr? {
+		fileprivate func _attr() -> __OS_dispatch_queue_attr? {
 			var attr: __OS_dispatch_queue_attr? = nil
 
 			if self.contains(.concurrent) {
@@ -50,19 +50,27 @@ public extension DispatchQueue {
 
 	public enum GlobalQueuePriority {
 		@available(OSX, deprecated: 10.10, message: "Use qos attributes instead")
-		@available(*, deprecated: 8.0, message: "Use qos attributes instead")
+		@available(iOS, deprecated: 8.0, message: "Use qos attributes instead")
+		@available(tvOS, deprecated, message: "Use qos attributes instead")
+		@available(watchOS, deprecated, message: "Use qos attributes instead")
 		case high
 
 		@available(OSX, deprecated: 10.10, message: "Use qos attributes instead")
-		@available(*, deprecated: 8.0, message: "Use qos attributes instead")
+		@available(iOS, deprecated: 8.0, message: "Use qos attributes instead")
+		@available(tvOS, deprecated, message: "Use qos attributes instead")
+		@available(watchOS, deprecated, message: "Use qos attributes instead")
 		case `default`
 
 		@available(OSX, deprecated: 10.10, message: "Use qos attributes instead")
-		@available(*, deprecated: 8.0, message: "Use qos attributes instead")
+		@available(iOS, deprecated: 8.0, message: "Use qos attributes instead")
+		@available(tvOS, deprecated, message: "Use qos attributes instead")
+		@available(watchOS, deprecated, message: "Use qos attributes instead")
 		case low
 
 		@available(OSX, deprecated: 10.10, message: "Use qos attributes instead")
-		@available(*, deprecated: 8.0, message: "Use qos attributes instead")
+		@available(iOS, deprecated: 8.0, message: "Use qos attributes instead")
+		@available(tvOS, deprecated, message: "Use qos attributes instead")
+		@available(watchOS, deprecated, message: "Use qos attributes instead")
 		case background
 
 		internal var _translatedValue: Int {
@@ -103,7 +111,7 @@ public extension DispatchQueue {
 		}
 	}
 
-	public class func concurrentPerform(iterations: Int, execute work: @noescape (Int) -> Void) {
+	public class func concurrentPerform(iterations: Int, execute work: (Int) -> Void) {
 		_swift_dispatch_apply_current(UInt32(iterations), work)
 	}
 
@@ -111,8 +119,10 @@ public extension DispatchQueue {
 		return _swift_dispatch_get_main_queue()
 	}
 
-	@available(OSX, deprecated: 10.10, message: "")
-	@available(*, deprecated: 8.0, message: "")
+	@available(OSX, deprecated: 10.10)
+	@available(iOS, deprecated: 8.0)
+	@available(tvOS, deprecated)
+	@available(watchOS, deprecated)
 	public class func global(priority: GlobalQueuePriority) -> DispatchQueue {
 		return __dispatch_get_global_queue(priority._translatedValue, 0)
 	}
@@ -185,12 +195,17 @@ public extension DispatchQueue {
 		group: DispatchGroup? = nil, 
 		qos: DispatchQoS = .unspecified, 
 		flags: DispatchWorkItemFlags = [], 
-		execute work: @convention(block) () -> Void) 
+		execute work: @escaping @convention(block) () -> Void) 
 	{
-		if group == nil && qos == .unspecified && flags.isEmpty {
+		if group == nil && qos == .unspecified {
 			// Fast-path route for the most common API usage
-			__dispatch_async(self, work)
-			return
+			if flags.isEmpty {
+				_swift_dispatch_async(self, work)
+				return
+			} else if flags == .barrier {
+				_swift_dispatch_barrier_async(self, work)
+				return
+			}
 		}
 
 		var block: @convention(block) () -> Void = work
@@ -200,19 +215,19 @@ public extension DispatchQueue {
 		}
 
 		if let g = group {
-			__dispatch_group_async(g, self, block)
+			_swift_dispatch_group_async(g, self, block)
 		} else {
-			__dispatch_async(self, block)
+			_swift_dispatch_async(self, block)
 		}
 	}
 
-	private func _syncBarrier(block: @noescape () -> ()) {
+	private func _syncBarrier(block: () -> ()) {
 		__dispatch_barrier_sync(self, block)
 	}
 
 	private func _syncHelper<T>(
-		fn: (@noescape () -> ()) -> (), 
-		execute work: @noescape () throws -> T, 
+		fn: (() -> ()) -> (), 
+		execute work: () throws -> T, 
 		rescue: ((Error) throws -> (T))) rethrows -> T 
 	{
 		var result: T?
@@ -235,7 +250,7 @@ public extension DispatchQueue {
 	private func _syncHelper<T>(
 		fn: (DispatchWorkItem) -> (), 
 		flags: DispatchWorkItemFlags,
-		execute work: @noescape () throws -> T,
+		execute work: () throws -> T,
 		rescue: ((Error) throws -> (T))) rethrows -> T 
 	{
 		var result: T?
@@ -255,11 +270,11 @@ public extension DispatchQueue {
 		}
 	}
 
-	public func sync<T>(execute work: @noescape () throws -> T) rethrows -> T {
+	public func sync<T>(execute work: () throws -> T) rethrows -> T {
 		return try self._syncHelper(fn: sync, execute: work, rescue: { throw $0 })
 	}
 
-	public func sync<T>(flags: DispatchWorkItemFlags, execute work: @noescape () throws -> T) rethrows -> T {
+	public func sync<T>(flags: DispatchWorkItemFlags, execute work: () throws -> T) rethrows -> T {
 		if flags == .barrier {
 			return try self._syncHelper(fn: _syncBarrier, execute: work, rescue: { throw $0 })
 		} else if #available(OSX 10.10, iOS 8.0, *), !flags.isEmpty {
@@ -273,13 +288,13 @@ public extension DispatchQueue {
 		deadline: DispatchTime, 
 		qos: DispatchQoS = .unspecified, 
 		flags: DispatchWorkItemFlags = [], 
-		execute work: @convention(block) () -> Void) 
+		execute work: @escaping @convention(block) () -> Void) 
 	{
 		if #available(OSX 10.10, iOS 8.0, *), qos != .unspecified || !flags.isEmpty {
 			let item = DispatchWorkItem(qos: qos, flags: flags, block: work)
-			__dispatch_after(deadline.rawValue, self, item._block)
+			_swift_dispatch_after(deadline.rawValue, self, item._block)
 		} else {
-			__dispatch_after(deadline.rawValue, self, work)
+			_swift_dispatch_after(deadline.rawValue, self, work)
 		}
 	}
 
@@ -287,24 +302,24 @@ public extension DispatchQueue {
 		wallDeadline: DispatchWallTime,
 		qos: DispatchQoS = .unspecified, 
 		flags: DispatchWorkItemFlags = [], 
-		execute work: @convention(block) () -> Void) 
+		execute work: @escaping @convention(block) () -> Void) 
 	{
 		if #available(OSX 10.10, iOS 8.0, *), qos != .unspecified || !flags.isEmpty {
 			let item = DispatchWorkItem(qos: qos, flags: flags, block: work)
-			__dispatch_after(wallDeadline.rawValue, self, item._block)
+			_swift_dispatch_after(wallDeadline.rawValue, self, item._block)
 		} else {
-			__dispatch_after(wallDeadline.rawValue, self, work)
+			_swift_dispatch_after(wallDeadline.rawValue, self, work)
 		}
 	}
 
 	@available(OSX 10.10, iOS 8.0, *)
 	public func asyncAfter(deadline: DispatchTime, execute: DispatchWorkItem) {
-		__dispatch_after(deadline.rawValue, self, execute._block)
+		_swift_dispatch_after(deadline.rawValue, self, execute._block)
 	}
 
 	@available(OSX 10.10, iOS 8.0, *)
 	public func asyncAfter(wallDeadline: DispatchWallTime, execute: DispatchWorkItem) {
-		__dispatch_after(wallDeadline.rawValue, self, execute._block)
+		_swift_dispatch_after(wallDeadline.rawValue, self, execute._block)
 	}
 
 	@available(OSX 10.10, iOS 8.0, *)
@@ -333,7 +348,7 @@ public extension DispatchQueue {
 	}
 }
 
-private func _destructDispatchSpecificValue(ptr: UnsafeMutablePointer<Void>?) {
+private func _destructDispatchSpecificValue(ptr: UnsafeMutableRawPointer?) {
 	if let p = ptr {
 		Unmanaged<AnyObject>.fromOpaque(p).release()
 	}
@@ -344,7 +359,3 @@ internal func _swift_dispatch_queue_concurrent() -> __OS_dispatch_queue_attr
 
 @_silgen_name("_swift_dispatch_get_main_queue")
 internal func _swift_dispatch_get_main_queue() -> DispatchQueue
-
-@_silgen_name("_swift_dispatch_apply_current_root_queue")
-internal func _swift_dispatch_apply_current_root_queue() -> DispatchQueue
-

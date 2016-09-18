@@ -1,4 +1,4 @@
-// RUN: %target-run-simple-swift | FileCheck %s
+// RUN: %target-run-simple-swift | %FileCheck %s
 // REQUIRES: executable_test
 
 // REQUIRES: objc_interop
@@ -60,7 +60,7 @@ autoreleasepool {
 // CHECK: exited
 print("exited")
 
-var d : NSDictionary = [415 : "Giants", 510 : "A's"]
+var d : NSDictionary = [415 : "Giants" , 510 : "A's"]
 var d_m : NSMutableDictionary = [1415 : "Big Giants", 11510 : "B's"]
 
 // CHECK: 510 => A's

@@ -22,15 +22,9 @@ extension String {
   ///     let zeroes = String("0" as Character, count: 10)
   ///     print(zeroes)
   ///     // Prints "0000000000"
+  @available(*, unavailable, message: "Replaced by init(repeating: String, count: Int)")
   public init(repeating repeatedValue: Character, count: Int) {
-    let s = String(repeatedValue)
-    self = String(_storage: _StringBuffer(
-        capacity: s._core.count * count,
-        initialSize: 0,
-        elementWidth: s._core.elementWidth))
-    for _ in 0..<count {
-      self += s
-    }
+    Builtin.unreachable()
   }
 
   /// Creates a string representing the given Unicode scalar repeated the
@@ -42,12 +36,41 @@ extension String {
   ///     let zeroes = String("0" as UnicodeScalar, count: 10)
   ///     print(zeroes)
   ///     // Prints "0000000000"
+  @available(*, unavailable, message: "Replaced by init(repeating: String, count: Int)")
   public init(repeating repeatedValue: UnicodeScalar, count: Int) {
-    self = String._fromWellFormedCodeUnitSequence(
-      UTF32.self,
-      input: repeatElement(repeatedValue.value, count: count))
+    Builtin.unreachable()
   }
-  
+
+  /// Creates a new string representing the given string repeated the specified
+  /// number of times.
+  ///
+  /// For example, use this initializer to create a string with ten `"00"`
+  /// strings in a row.
+  ///
+  ///     let zeroes = String(repeating: "00", count: 10)
+  ///     print(zeroes)
+  ///     // Prints "00000000000000000000"
+  ///
+  /// - Parameters:
+  ///   - repeatedValue: The string to repeat.
+  ///   - count: The number of times to repeat `repeatedValue` in the resulting
+  ///     string.
+  public init(repeating repeatedValue: String, count: Int) {
+    if count == 0 {
+      self = ""
+      return
+    }
+    precondition(count > 0, "Negative count not allowed")
+    let s = repeatedValue
+    self = String(_storage: _StringBuffer(
+        capacity: s._core.count * count,
+        initialSize: 0,
+        elementWidth: s._core.elementWidth))
+    for _ in 0..<count {
+      self += s
+    }
+  }
+
   public var _lines : [String] {
     return _split(separator: "\n")
   }
@@ -65,7 +88,9 @@ extension String {
 
 extension String {
   public init(_ _c: UnicodeScalar) {
-    self = String(repeating: _c, count: 1)
+    self = String._fromWellFormedCodeUnitSequence(
+      UTF32.self,
+      input: repeatElement(_c.value, count: 1))
   }
 }
 
@@ -314,7 +339,7 @@ extension String {
   /// predicate returns true. Returns the string before that character, the 
   /// character that matches, the string after that character,
   /// and a boolean value indicating whether any character was found.
-  public func _splitFirstIf(_ predicate: @noescape (UnicodeScalar) -> Bool)
+  public func _splitFirstIf(_ predicate: (UnicodeScalar) -> Bool)
     -> (before: String, found: UnicodeScalar, after: String, wasFound: Bool)
   {
     let rng = unicodeScalars

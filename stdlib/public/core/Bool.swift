@@ -146,6 +146,18 @@ extension Bool : Equatable, Hashable {
   }
 }
 
+extension Bool : LosslessStringConvertible {
+  public init?(_ description: String) {
+    if description == "true" {
+      self = true
+    } else if description == "false" {
+      self = false
+    } else {
+      return nil
+    }
+  }
+}
+
 //===----------------------------------------------------------------------===//
 // Operators
 //===----------------------------------------------------------------------===//
@@ -205,6 +217,7 @@ extension Bool {
   /// - Parameters:
   ///   - lhs: The left-hand side of the operation.
   ///   - rhs: The right-hand side of the operation.
+  @_transparent
   @inline(__always)
   public static func && (lhs: Bool, rhs: @autoclosure () throws -> Bool) rethrows
       -> Bool{
@@ -244,6 +257,7 @@ extension Bool {
   /// - Parameters:
   ///   - lhs: The left-hand side of the operation.
   ///   - rhs: The right-hand side of the operation.
+  @_transparent
   @inline(__always)
   public static func || (lhs: Bool, rhs: @autoclosure () throws -> Bool) rethrows
       -> Bool {

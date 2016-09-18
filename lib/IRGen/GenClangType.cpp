@@ -493,7 +493,7 @@ GenClangType::visitBoundGenericType(CanBoundGenericType type) {
 clang::CanQualType GenClangType::visitEnumType(CanEnumType type) {
   // Special case: Uninhabited enums are not @objc, so we don't
   // know what to do below, but we can just convert to 'void'.
-  if (type->isNever())
+  if (type->isUninhabited())
     return Converter.convert(IGM, IGM.Context.TheEmptyTupleType);
 
   assert(type->getDecl()->isObjC() && "not an @objc enum?!");
@@ -742,15 +742,6 @@ clang::CanQualType ClangTypeConverter::convert(IRGenModule &IGM, CanType type) {
                             1);
         auto ptrTy = ctx.getObjCObjectPointerType(clangType);
         return ctx.getCanonicalType(ptrTy);
-      }
-    } else if (decl == IGM.Context.getBoolDecl()) {
-      // FIXME: Handle _Bool and DarwinBoolean.
-      auto &ctx = IGM.getClangASTContext();
-      auto &TI = ctx.getTargetInfo();
-      // FIXME: Figure out why useSignedCharForObjCBool() returns
-      // 'true' on Linux
-      if (IGM.ObjCInterop && TI.useSignedCharForObjCBool()) {
-        return ctx.SignedCharTy;
       }
     }
   }

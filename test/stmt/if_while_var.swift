@@ -1,7 +1,11 @@
 // RUN: %target-parse-verify-swift
 
+struct NonOptionalStruct {}
+enum NonOptionalEnum { case foo }
+
 func foo() -> Int? { return .none }
-func nonOptional() -> Int { return 0 }
+func nonOptionalStruct() -> NonOptionalStruct { fatalError() }
+func nonOptionalEnum() -> NonOptionalEnum { fatalError() }
 func use(_ x: Int) {}
 func modify(_ x: inout Int) {}
 
@@ -19,7 +23,14 @@ if var x = foo() {
 
 use(x) // expected-error{{unresolved identifier 'x'}}
 
-if let x = nonOptional() { } // expected-error{{initializer for conditional binding must have Optional type, not 'Int'}}
+if let x = nonOptionalStruct() { } // expected-error{{initializer for conditional binding must have Optional type, not 'NonOptionalStruct'}}
+if let x = nonOptionalEnum() { } // expected-error{{initializer for conditional binding must have Optional type, not 'NonOptionalEnum'}}
+
+guard let _ = nonOptionalStruct() else { fatalError() } // expected-error{{initializer for conditional binding must have Optional type, not 'NonOptionalStruct'}}
+guard let _ = nonOptionalEnum() else { fatalError() } // expected-error{{initializer for conditional binding must have Optional type, not 'NonOptionalEnum'}}
+
+if case let x? = nonOptionalStruct() { } // expected-error{{'?' pattern cannot match values of type 'NonOptionalStruct'}}
+if case let x? = nonOptionalEnum() { } // expected-error{{'?' pattern cannot match values of type 'NonOptionalEnum'}}
 
 class B {} // expected-note * {{did you mean 'B'?}}
 class D : B {}// expected-note * {{did you mean 'D'?}}
@@ -61,7 +72,7 @@ if let x = opt, let y = opt, x != y,
 
 // Leading boolean conditional.
 if 1 != 2, let x = opt,
-   y = opt,  // expected-warning {{expected 'let' in conditional}} {{4-4=let }}
+   y = opt,  // expected-error {{expected 'let' in conditional}} {{4-4=let }}
    x != y,
    let a = opt, var b = opt {
 }

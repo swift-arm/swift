@@ -11,6 +11,7 @@
     "StringBridge.swift",
     "StringBuffer.swift",
     "StringCharacterView.swift",
+    "StringComparable.swift",
     "StringCore.swift",
     "StringIndexConversions.swift",
     "StringInterpolation.swift",
@@ -78,7 +79,9 @@
         "SliceBuffer.swift",
         "SwiftNativeNSArray.swift"],
       "HashedCollections": [
-        "HashedCollections.swift"]
+        "HashedCollections.swift",
+        "HashedCollectionsAnyHashableExtensions.swift"
+      ]
     }
   ],
   "C": [
@@ -86,7 +89,8 @@
     "BridgeStorage.swift",
     "Builtin.swift",
     "VarArgs.swift",
-    "CTypes.swift"
+    "CTypes.swift",
+    "MemoryLayout.swift"
   ],
   "Reflection": [
     "Mirrors.swift",
@@ -99,7 +103,6 @@
     "BuiltinMath.swift",
     {
     "Integers": [
-      "Integers.swift",
       "IntegerArithmetic.swift",
       "FixedPoint.swift",
       "IntegerParsing.swift"],
@@ -123,6 +126,7 @@
     "ShadowProtocols.swift"
   ],
   "Misc": [
+    "AnyHashable.swift",
     "Interval.swift",
     "Hashing.swift",
     "ErrorType.swift",

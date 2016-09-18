@@ -82,7 +82,7 @@ ErrorBridgingTests.test("NSCoding") {
     let orig = EnumError.ReallyBadError as NSError
     let unarchived = archiveAndUnarchiveObject(orig)!
     expectEqual(orig, unarchived)
-    expectTrue(unarchived.dynamicType == NSError.self)
+    expectTrue(type(of: unarchived) == NSError.self)
   }
 }
 
@@ -97,10 +97,10 @@ ErrorBridgingTests.test("NSError-to-enum bridging") {
     let ns = NSError(domain: NSCocoaErrorDomain,
                      code: NSFileNoSuchFileError,
                      userInfo: [
-                       NSFilePathErrorKey as NSObject : "/dev/null",
-                       NSStringEncodingErrorKey as NSObject: /*ASCII=*/1,
-                       NSUnderlyingErrorKey as NSObject: underlyingError,
-                       NSURLErrorKey as NSObject: testURL
+                       AnyHashable(NSFilePathErrorKey): "/dev/null",
+                       AnyHashable(NSStringEncodingErrorKey): /*ASCII=*/1,
+                       AnyHashable(NSUnderlyingErrorKey): underlyingError,
+                       AnyHashable(NSURLErrorKey): testURL
                      ])
 
     objc_setAssociatedObject(ns, &CanaryHandle, NoisyError(),
@@ -143,7 +143,7 @@ ErrorBridgingTests.test("NSError-to-enum bridging") {
     // URLError domain
     let nsURL = NSError(domain: NSURLErrorDomain,
                         code: NSURLErrorBadURL,
-                        userInfo: [NSURLErrorFailingURLErrorKey as NSObject : testURL])
+                        userInfo: [AnyHashable(NSURLErrorFailingURLErrorKey): testURL])
     let eURL: Error = nsURL
     let isBadURLError: Bool
     switch eURL {
@@ -162,7 +162,7 @@ ErrorBridgingTests.test("NSError-to-enum bridging") {
     // CoreLocation error domain
     let nsCL = NSError(domain: kCLErrorDomain,
                        code: CLError.headingFailure.rawValue,
-                       userInfo: [NSURLErrorKey as NSObject: testURL])
+                       userInfo: [AnyHashable(NSURLErrorKey): testURL])
     let eCL: Error = nsCL
     let isHeadingFailure: Bool
     switch eCL {
@@ -318,7 +318,7 @@ class SomeNSErrorSubclass: NSError {}
 ErrorBridgingTests.test("Thrown NSError identity is preserved") {
   do {
     let e = NSError(domain: "ClericalError", code: 219,
-                    userInfo: ["yeah": "yeah"])
+                    userInfo: [AnyHashable("yeah"): "yeah"])
     do {
       throw e
     } catch let e2 as NSError {
@@ -331,7 +331,7 @@ ErrorBridgingTests.test("Thrown NSError identity is preserved") {
 
   do {
     let f = SomeNSErrorSubclass(domain: "ClericalError", code: 219,
-                                userInfo: ["yeah": "yeah"])
+                                userInfo: [AnyHashable("yeah"): "yeah"])
     do {
       throw f
     } catch let f2 as NSError {
@@ -438,7 +438,7 @@ extension MySwiftCustomizedError : RecoverableError {
                        optionIndex recoveryOptionIndex: Int,
                        delegate: AnyObject?,
                        didRecoverSelector: Selector,
-                       contextInfo: UnsafeMutablePointer<Void>?)
+                       contextInfo: UnsafeMutableRawPointer?)
 
   @objc(attemptRecoveryFromError:optionIndex:)
   func attemptRecovery(fromError nsError: Error,
@@ -447,16 +447,16 @@ extension MySwiftCustomizedError : RecoverableError {
 
 class RecoveryDelegate {
   let expectedSuccess: Bool
-  let expectedContextInfo: UnsafeMutablePointer<Void>?
+  let expectedContextInfo: UnsafeMutableRawPointer?
   var called = false
 
   init(expectedSuccess: Bool,
-       expectedContextInfo: UnsafeMutablePointer<Void>?) {
+       expectedContextInfo: UnsafeMutableRawPointer?) {
     self.expectedSuccess = expectedSuccess
     self.expectedContextInfo = expectedContextInfo
   }
 
-  @objc func recover(success: Bool, contextInfo: UnsafeMutablePointer<Void>?) {
+  @objc func recover(success: Bool, contextInfo: UnsafeMutableRawPointer?) {
     expectEqual(expectedSuccess, success)
     expectEqual(expectedContextInfo, contextInfo)
     called = true
@@ -580,6 +580,103 @@ ErrorBridgingTests.test("Customizing localization/recovery laziness") {
   if #available(OSX 10.11, iOS 9.0, tvOS 9.0, watchOS 2.0, *) {
     expectEqual(countBefore+1, MySwiftCustomizedError.errorDescriptionCount)
   }
+}
+
+enum DefaultCustomizedError1 : CustomNSError {
+  case bad
+  case worse
+}
+
+enum DefaultCustomizedError2 : Int, CustomNSError {
+  case bad = 7
+  case worse = 13
+}
+
+enum DefaultCustomizedError3 : UInt, CustomNSError {
+  case bad = 9
+  case worse = 115
+
+  static var errorDomain: String {
+    return "customized3"
+  }
+}
+
+ErrorBridgingTests.test("Default-customized via CustomNSError") {
+  expectEqual(1, (DefaultCustomizedError1.worse as NSError).code)
+  expectEqual(13, (DefaultCustomizedError2.worse as NSError).code)
+  expectEqual(115, (DefaultCustomizedError3.worse as NSError).code)
+  expectEqual("customized3", (DefaultCustomizedError3.worse as NSError).domain)
+}
+
+class MyNSError : NSError {  }
+
+ErrorBridgingTests.test("NSError subclass identity") {
+  let myNSError: Error = MyNSError(domain: "MyNSError", code: 0, userInfo: [:])
+  let nsError = myNSError as NSError
+  expectTrue(type(of: nsError) == MyNSError.self)
+}
+
+ErrorBridgingTests.test("Wrapped NSError identity") {
+  let nsError = NSError(domain: NSCocoaErrorDomain,
+                   code: NSFileNoSuchFileError,
+                   userInfo: [
+                     AnyHashable(NSFilePathErrorKey) : "/dev/null",
+                     AnyHashable(NSStringEncodingErrorKey): /*ASCII=*/1,
+                   ])
+
+  let error: Error = nsError
+  let nsError2: NSError = error as NSError
+  expectTrue(nsError === nsError2)
+
+  // Extracting the NSError via the runtime.
+  let cocoaErrorAny: Any = error as! CocoaError
+  let nsError3: NSError = cocoaErrorAny as! NSError
+  expectTrue(nsError === nsError3)
+
+  if let cocoaErrorAny2: Any = error as? CocoaError {
+    let nsError4: NSError = cocoaErrorAny2 as! NSError
+    expectTrue(nsError === nsError4)
+  } else {
+    expectUnreachable()
+  }
+
+  // Extracting the NSError via direct call.
+  let cocoaError = error as! CocoaError
+  let nsError5: NSError = cocoaError as NSError
+  expectTrue(nsError === nsError5)
+
+  if let cocoaError2 = error as? CocoaError {
+    let nsError6: NSError = cocoaError as NSError
+    expectTrue(nsError === nsError6)
+  } else {
+    expectUnreachable()
+  }
+}
+
+extension Error {
+	func asNSError() -> NSError {
+		return self as NSError
+	}
+}
+
+func unconditionalCast<T>(_ x: Any, to: T.Type) -> T {
+  return x as! T
+}
+
+func conditionalCast<T>(_ x: Any, to: T.Type) -> T? {
+  return x as? T
+}
+
+// SR-1562
+ErrorBridgingTests.test("Error archetype identity") {
+  let myError = NSError(domain: "myErrorDomain", code: 0,
+                        userInfo: [ AnyHashable("one") : 1 ])
+  expectTrue(myError === myError.asNSError())
+
+  expectTrue(unconditionalCast(myError, to: Error.self) as NSError
+     === myError)
+  expectTrue(conditionalCast(myError, to: Error.self)! as NSError
+     === myError)
 }
 
 runAllTests()

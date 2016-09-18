@@ -60,7 +60,7 @@ func nthUnicodeScalar(_ n: UInt32) -> UnicodeScalar {
   for r in unicodeScalarRanges {
     count += r.upperBound - r.lowerBound
     if count > n {
-      return UnicodeScalar(r.upperBound - (count - n))
+      return UnicodeScalar(r.upperBound - (count - n))!
     }
   }
   _preconditionFailure("Index out of range")
@@ -106,7 +106,7 @@ final class CodecTest<Codec : TestableUnicodeCodec> {
 
     // Use Cocoa to encode the scalar
     nsEncode(scalar.value, Codec.encodingId(), &nsEncodeBuffer, &used)
-    let nsEncoded = nsEncodeBuffer[0..<(used/sizeof(CodeUnit.self))]
+    let nsEncoded = nsEncodeBuffer[0..<(used/MemoryLayout<CodeUnit>.size)]
     var encodeIndex = encodeBuffer.startIndex
     let encodeOutput: (CodeUnit) -> Void = {
       self.encodeBuffer[encodeIndex] = $0

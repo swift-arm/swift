@@ -27,7 +27,7 @@ internal func __NSCalendarInit(_ identifier : NSString) -> NSCalendar?
 /**
  `Calendar` encapsulates information about systems of reckoning time in which the beginning, length, and divisions of a year are defined. It provides information about the calendar and support for calendrical computations such as determining the range of a given calendrical unit and adding units to a given absolute time.
 */
-public struct Calendar : CustomStringConvertible, CustomDebugStringConvertible, Hashable, Equatable, ReferenceConvertible, _MutableBoxing {
+public struct Calendar : Hashable, Equatable, ReferenceConvertible, _MutableBoxing {
     public typealias ReferenceType = NSCalendar
     
     private var _autoupdating: Bool
@@ -115,7 +115,7 @@ public struct Calendar : CustomStringConvertible, CustomDebugStringConvertible, 
     // MARK: -
     // MARK: Bridging
     
-    private init(reference : NSCalendar) {
+    fileprivate init(reference : NSCalendar) {
         _handle = _MutableHandle(reference: reference)
         if __NSCalendarIsAutoupdating(reference) {
             _autoupdating = true
@@ -805,7 +805,7 @@ public struct Calendar : CustomStringConvertible, CustomDebugStringConvertible, 
     }
     
     @available(*, unavailable, message: "use nextWeekend(startingAfter:matching:matchingPolicy:repeatedTimePolicy:direction:using:) instead")
-    public func enumerateDates(startingAfter start: Date, matching comps: DateComponents, options opts: NSCalendar.Options = [], using block: @noescape (Date?, Bool, UnsafeMutablePointer<ObjCBool>) -> Swift.Void) { fatalError() }
+    public func enumerateDates(startingAfter start: Date, matching comps: DateComponents, options opts: NSCalendar.Options = [], using block: (Date?, Bool, UnsafeMutablePointer<ObjCBool>) -> Swift.Void) { fatalError() }
     
     /// Computes the dates which match (or most closely match) a given set of components, and calls the closure once for each of them, until the enumeration is stopped.
     ///
@@ -825,11 +825,11 @@ public struct Calendar : CustomStringConvertible, CustomDebugStringConvertible, 
     /// - parameter direction: Which direction in time to search. The default value is `.forward`, which means later in time.
     /// - parameter block: A closure that is called with search results.
     @available(iOS 8.0, *)
-    public func enumerateDates(startingAfter start: Date, matching components: DateComponents, matchingPolicy: MatchingPolicy, repeatedTimePolicy: RepeatedTimePolicy = .first, direction: SearchDirection = .forward, using block: @noescape (result: Date?, exactMatch: Bool, stop: inout Bool) -> Void) {
+    public func enumerateDates(startingAfter start: Date, matching components: DateComponents, matchingPolicy: MatchingPolicy, repeatedTimePolicy: RepeatedTimePolicy = .first, direction: SearchDirection = .forward, using block: (_ result: Date?, _ exactMatch: Bool, _ stop: inout Bool) -> Void) {
         _handle.map {
             $0.enumerateDates(startingAfter: start, matching: components, options: Calendar._toCalendarOptions(matchingPolicy: matchingPolicy, repeatedTimePolicy: repeatedTimePolicy, direction: direction)) { (result, exactMatch, stop) in
                 var stopv = false
-                block(result: result, exactMatch: exactMatch, stop: &stopv)
+                block(result, exactMatch, &stopv)
                 if stopv {
                     stop.pointee = true
                 }
@@ -907,14 +907,6 @@ public struct Calendar : CustomStringConvertible, CustomDebugStringConvertible, 
     }
     
     // MARK: -
-    
-    public var description: String {
-        return _handle.map { $0.description }
-    }
-    
-    public var debugDescription : String {
-        return _handle.map { $0.debugDescription }
-    }
     
     public var hashValue : Int {
         // We implement hash ourselves, because we need to make sure autoupdating calendars have the same hash
@@ -1081,6 +1073,37 @@ public struct Calendar : CustomStringConvertible, CustomDebugStringConvertible, 
 
 }
 
+extension Calendar : CustomDebugStringConvertible, CustomStringConvertible, CustomReflectable {
+    private var _kindDescription : String {
+        if (self == Calendar.autoupdatingCurrent) {
+            return "autoupdatingCurrent"
+        } else if (self == Calendar.current) {
+            return "current"
+        } else {
+            return "fixed"
+        }
+    }
+    
+    public var description: String {
+        return "\(identifier) (\(_kindDescription))"
+    }
+    
+    public var debugDescription : String {
+        return "\(identifier) (\(_kindDescription))"
+    }
+    
+    public var customMirror : Mirror {
+        var c: [(label: String?, value: Any)] = []
+        c.append((label: "identifier", value: identifier))
+        c.append((label: "kind", value: _kindDescription))
+        c.append((label: "locale", value: locale))
+        c.append((label: "timeZone", value: timeZone))
+        c.append((label: "firstWeekday", value: firstWeekday))
+        c.append((label: "minimumDaysInFirstWeek", value: minimumDaysInFirstWeek))
+        return Mirror(self, children: c, displayStyle: Mirror.DisplayStyle.struct)
+    }
+}
+
 extension Calendar : _ObjectiveCBridgeable {
     @_semantics("convertToObjectiveC")
     public func _bridgeToObjectiveC() -> NSCalendar {
@@ -1102,6 +1125,14 @@ extension Calendar : _ObjectiveCBridgeable {
         var result: Calendar? = nil
         _forceBridgeFromObjectiveC(source!, result: &result)
         return result!
+    }
+}
+
+extension NSCalendar : _HasCustomAnyHashableRepresentation {
+    // Must be @nonobjc to avoid infinite recursion during bridging.
+    @nonobjc
+    public func _toCustomAnyHashable() -> AnyHashable? {
+        return AnyHashable(self as Calendar)
     }
 }
 

@@ -22,14 +22,14 @@ public struct UUID : ReferenceConvertible, Hashable, Equatable, CustomStringConv
     
     /* Create a new UUID with RFC 4122 version 4 random bytes */
     public init() {
-        withUnsafeMutablePointer(&uuid) {
+        withUnsafeMutablePointer(to: &uuid) {
             uuid_generate_random(unsafeBitCast($0, to: UnsafeMutablePointer<UInt8>.self))
         }
     }
     
-    private init(reference: NSUUID) {
+    fileprivate init(reference: NSUUID) {
         var bytes: uuid_t = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-        withUnsafeMutablePointer(&bytes) {
+        withUnsafeMutablePointer(to: &bytes) {
             reference.getBytes(unsafeBitCast($0, to: UnsafeMutablePointer<UInt8>.self))
         }
         uuid = bytes
@@ -39,7 +39,7 @@ public struct UUID : ReferenceConvertible, Hashable, Equatable, CustomStringConv
     /// 
     /// Returns nil for invalid strings.
     public init?(uuidString string: String) {
-        let res = withUnsafeMutablePointer(&uuid) {
+        let res = withUnsafeMutablePointer(to: &uuid) {
             return uuid_parse(string, unsafeBitCast($0, to: UnsafeMutablePointer<UInt8>.self))
         }
         if res != 0 {
@@ -56,16 +56,18 @@ public struct UUID : ReferenceConvertible, Hashable, Equatable, CustomStringConv
     public var uuidString: String {
         var bytes: uuid_string_t = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
         var localValue = uuid
-        return withUnsafeMutablePointers(&localValue, &bytes) { val, str -> String in
-            uuid_unparse(unsafeBitCast(val, to: UnsafePointer<UInt8>.self), unsafeBitCast(str, to: UnsafeMutablePointer<Int8>.self))
-            return String(cString: unsafeBitCast(str, to: UnsafePointer<CChar>.self), encoding: .utf8)!
+        return withUnsafeMutablePointer(to: &localValue) { val in
+            withUnsafeMutablePointer(to: &bytes) { str in
+                uuid_unparse(unsafeBitCast(val, to: UnsafePointer<UInt8>.self), unsafeBitCast(str, to: UnsafeMutablePointer<Int8>.self))
+                return String(cString: unsafeBitCast(str, to: UnsafePointer<CChar>.self), encoding: .utf8)!
+            }
         }
     }
     
     public var hashValue: Int {
         var localValue = uuid
-        return withUnsafeMutablePointer(&localValue) {
-            return Int(bitPattern: CFHashBytes(unsafeBitCast($0, to: UnsafeMutablePointer<UInt8>.self), CFIndex(sizeof(uuid_t.self))))
+        return withUnsafeMutablePointer(to: &localValue) {
+            return Int(bitPattern: CFHashBytes(unsafeBitCast($0, to: UnsafeMutablePointer<UInt8>.self), CFIndex(MemoryLayout<uuid_t>.size)))
         }
     }
     
@@ -79,9 +81,9 @@ public struct UUID : ReferenceConvertible, Hashable, Equatable, CustomStringConv
     
     // MARK: - Bridging Support
     
-    private var reference: NSUUID {
+    fileprivate var reference: NSUUID {
         var bytes = uuid
-        return withUnsafePointer(&bytes) {
+        return withUnsafePointer(to: &bytes) {
             return NSUUID(uuidBytes: unsafeBitCast($0, to: UnsafePointer<UInt8>.self))
         }
     }
@@ -103,6 +105,14 @@ public struct UUID : ReferenceConvertible, Hashable, Equatable, CustomStringConv
             lhs.uuid.13 == rhs.uuid.13 &&
             lhs.uuid.14 == rhs.uuid.14 &&
             lhs.uuid.15 == rhs.uuid.15
+    }
+}
+
+extension UUID : CustomReflectable {
+    public var customMirror: Mirror {
+        let c : [(label: String?, value: Any)] = []
+        let m = Mirror(self, children:c, displayStyle: Mirror.DisplayStyle.struct)
+        return m
     }
 }
 
@@ -129,3 +139,12 @@ extension UUID : _ObjectiveCBridgeable {
         return result!
     }
 }
+
+extension NSUUID : _HasCustomAnyHashableRepresentation {
+    // Must be @nonobjc to avoid infinite recursion during bridging.
+    @nonobjc
+    public func _toCustomAnyHashable() -> AnyHashable? {
+        return AnyHashable(self as UUID)
+    }
+}
+

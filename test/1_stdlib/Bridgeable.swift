@@ -1,4 +1,4 @@
-// RUN: %target-run-simple-swift | FileCheck %s
+// RUN: %target-run-simple-swift | %FileCheck %s
 // REQUIRES: executable_test
 
 // REQUIRES: objc_interop
@@ -40,10 +40,6 @@ func testBridging<T>(_ x: T, _ name: String) {
 
 //===----------------------------------------------------------------------===//
 struct BridgedValueType : _ObjectiveCBridgeable {
-  static func _isBridgedToObjectiveC() -> Bool {
-    return true
-  }
-  
   func _bridgeToObjectiveC() -> C {
     return C()
   }

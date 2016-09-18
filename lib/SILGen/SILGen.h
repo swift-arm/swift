@@ -129,6 +129,11 @@ public:
   Optional<FuncDecl*> UnconditionallyBridgeFromObjectiveCRequirement;
   Optional<AssociatedTypeDecl*> BridgedObjectiveCType;
 
+  Optional<ProtocolDecl*> BridgedStoredNSError;
+  Optional<VarDecl*> NSErrorRequirement;
+
+  Optional<ProtocolConformance *> NSErrorConformanceToError;
+
 public:
   SILGenModule(SILModule &M, Module *SM, bool makeModuleFragile);
   ~SILGenModule();
@@ -205,6 +210,7 @@ public:
   void visitEnumCaseDecl(EnumCaseDecl *d) {}
   void visitEnumElementDecl(EnumElementDecl *d) {}
   void visitOperatorDecl(OperatorDecl *d) {}
+  void visitPrecedenceGroupDecl(PrecedenceGroupDecl *d) {}
   void visitTypeAliasDecl(TypeAliasDecl *d) {}
   void visitAbstractTypeParamDecl(AbstractTypeParamDecl *d) {}
   void visitSubscriptDecl(SubscriptDecl *d) {}
@@ -375,6 +381,20 @@ public:
   /// _ObjectiveCBridgeable protocol.
   ProtocolConformance *getConformanceToObjectiveCBridgeable(SILLocation loc,
                                                             Type type);
+
+  /// Retrieve the _BridgedStoredNSError protocol definition.
+  ProtocolDecl *getBridgedStoredNSError(SILLocation loc);
+
+  /// Retrieve the _BridgedStoredNSError._nsError requirement.
+  VarDecl *getNSErrorRequirement(SILLocation loc);
+
+  /// Find the conformance of the given Swift type to the
+  /// _BridgedStoredNSError protocol.
+  Optional<ProtocolConformanceRef>
+  getConformanceToBridgedStoredNSError(SILLocation loc, Type type);
+
+  /// Retrieve the conformance of NSError to the Error protocol.
+  ProtocolConformance *getNSErrorConformanceToError();
 
   /// Report a diagnostic.
   template<typename...T, typename...U>

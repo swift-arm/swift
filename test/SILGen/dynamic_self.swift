@@ -1,4 +1,4 @@
-// RUN: %target-swift-frontend -emit-silgen %s -disable-objc-attr-requires-foundation-module | FileCheck %s
+// RUN: %target-swift-frontend -emit-silgen %s -disable-objc-attr-requires-foundation-module | %FileCheck %s
 
 protocol P {
   func f() -> Self
@@ -16,7 +16,7 @@ class X : P, CP {
 
   // CHECK-LABEL: sil hidden @_TZFC12dynamic_self1X7factory{{.*}} : $@convention(method) (Int, @thick X.Type) -> @owned X
   // CHECK: bb0([[I:%[0-9]+]] : $Int, [[SELF:%[0-9]+]] : $@thick X.Type):
-  // CHECK: [[CTOR:%[0-9]+]] = class_method [[SELF]] : $@thick X.Type, #X.init!allocator.1 : (X.Type) -> (int: Int) -> X , $@convention(method) (Int, @thick X.Type) -> @owned X
+  // CHECK: [[CTOR:%[0-9]+]] = class_method [[SELF]] : $@thick X.Type, #X.init!allocator.1 : (X.Type) -> (Int) -> X , $@convention(method) (Int, @thick X.Type) -> @owned X
   // CHECK: apply [[CTOR]]([[I]], [[SELF]]) : $@convention(method) (Int, @thick X.Type) -> @owned X
   class func factory(i: Int) -> Self { return self.init(int: i) }
 }

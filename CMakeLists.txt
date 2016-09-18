@@ -104,7 +104,7 @@ set(SWIFT_ANALYZE_CODE_COVERAGE FALSE CACHE STRING
 set_property(CACHE SWIFT_ANALYZE_CODE_COVERAGE PROPERTY
     STRINGS FALSE "NOT-MERGED" "MERGED")
 
-set(SWIFT_VERSION "3.0" CACHE STRING
+set(SWIFT_VERSION "3.0.1" CACHE STRING
     "The user-visible version of the Swift compiler")
 set(SWIFT_VENDOR "" CACHE STRING
     "The vendor name of the Swift compiler")
@@ -832,11 +832,6 @@ if(SWIFT_INCLUDE_TOOLS)
   add_subdirectory(include)
   add_subdirectory(lib)
   add_subdirectory(tools)
-endif()
-
-is_sdk_requested("${SWIFT_HOST_VARIANT_SDK}" SWIFT_HOST_SDK_REQUESTED)
-if(SWIFT_INCLUDE_TOOLS AND SWIFT_BUILD_STDLIB AND SWIFT_HOST_SDK_REQUESTED)
-  add_subdirectory(tools/swift-reflection-dump)
 endif()
 
 add_subdirectory(utils)

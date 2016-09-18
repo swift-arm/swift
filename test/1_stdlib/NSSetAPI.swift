@@ -38,12 +38,33 @@ NSSetAPI.test("ExpressibleByArrayLiteral") {
 }
 
 NSSetAPI.test("CustomStringConvertible") {
-  // FIXME: rdar://problem/27515965 Type checker tries to use the
-  // sequence-of-Character initializer here instead of the printing initializer
-  // without the 'Any' cast.
-  let result = String(NSSet(objects:"a", "b", "c", "42") as Any)
+  let result = String(describing: NSSet(objects:"a", "b", "c", "42"))
   let expect = "{(\n    b,\n    42,\n    c,\n    a\n)}"
   expectEqual(expect, result)
+}
+
+NSSetAPI.test("AnyHashable containing NSSet") {
+  let values: [NSSet] = [
+    NSSet(),
+    NSSet(objects: 1, 2, 3),
+    NSSet(objects: 1, 2, 3),
+  ]
+  let anyHashables = values.map(AnyHashable.init)
+  expectEqual(Set<AnyHashable>.self, type(of: anyHashables[0].base))
+  expectEqual(Set<AnyHashable>.self, type(of: anyHashables[1].base))
+  expectEqual(Set<AnyHashable>.self, type(of: anyHashables[2].base))
+  expectNotEqual(anyHashables[0], anyHashables[1])
+  expectEqual(anyHashables[1], anyHashables[2])
+}
+
+NSSetAPI.test("AnyHashable containing NSSet that contains an NSSet") {
+  let anyHashable = AnyHashable(NSSet(objects: NSSet(objects: 1,2,3)))
+  expectEqual(Set<AnyHashable>.self, type(of: anyHashable.base))
+
+  if let firstNested
+    = expectNotEmpty((anyHashable.base as! Set<AnyHashable>).first!) {
+    expectEqual(Set<AnyHashable>.self, type(of: firstNested.base))
+  }
 }
 
 var NSOrderedSetAPI = TestSuite("NSOrderedSetAPI")
@@ -64,10 +85,7 @@ NSOrderedSetAPI.test("ExpressibleByArrayLiteral") {
 }
 
 NSOrderedSetAPI.test("CustomStringConvertible") {
-  // FIXME: rdar://problem/27515965 Type checker tries to use the
-  // sequence-of-Character initializer here instead of the printing initializer
-  // without the 'Any' cast.
-  let result = String(NSOrderedSet(objects:"a", "b", "c", "42") as Any)
+  let result = String(describing: NSOrderedSet(objects:"a", "b", "c", "42"))
   let expect = "{(\n    a,\n    b,\n    c,\n    42\n)}"
   expectEqual(expect, result)
 }

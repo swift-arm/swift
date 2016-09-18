@@ -14,6 +14,8 @@
 
 import Swift
 import StdlibUnittest
+import StdlibUnicodeUnittest
+import StdlibCollectionUnittest
 
 #if _runtime(_ObjC)
 // FIXME: Foundation leaks through StdlibUnittest.  It adds some conformances
@@ -27,7 +29,7 @@ print("testing...")
 
 let replacementUTF16: UTF16.CodeUnit = 0xFFFD
 let replacementUTF8: [UTF8.CodeUnit] = [0xEF, 0xBF, 0xBD]
-let replacementScalar = UnicodeScalar(replacementUTF16)
+let replacementScalar = UnicodeScalar(replacementUTF16)!
 let replacementCharacter = Character(replacementScalar)
 
 // This string contains a variety of non-ASCII characters, including
@@ -393,14 +395,14 @@ tests.test("index-mapping/utf8-to-utf16") {
 //===--- To UnicodeScalar -------------------------------------------------===//
 tests.test("index-mapping/character-to-unicode-scalar") {
   let winterCharacterUnicodeScalars: [UnicodeScalar] = [
-    UnicodeScalar(0x1f3c2),
-    UnicodeScalar(0x2603),
-    UnicodeScalar(0x2745),
-    UnicodeScalar(0x2746),
-    UnicodeScalar(0x2744), // 0xfe0e,
-    UnicodeScalar(0x26c4), // 0xfe0f,
-    UnicodeScalar(0x2744), // 0xfe0f
-    replacementScalar, UnicodeScalar(0x20), replacementScalar, replacementScalar
+    UnicodeScalar(0x1f3c2)!,
+    UnicodeScalar(0x2603)!,
+    UnicodeScalar(0x2745)!,
+    UnicodeScalar(0x2746)!,
+    UnicodeScalar(0x2744)!, // 0xfe0e,
+    UnicodeScalar(0x26c4)!, // 0xfe0f,
+    UnicodeScalar(0x2744)!, // 0xfe0f
+    replacementScalar, UnicodeScalar(0x20)!, replacementScalar, replacementScalar
   ]
   
   expectEqualSequence(
@@ -740,5 +742,56 @@ tests.test("UnicodeScalars->String") {
   }
 }
 
+#if _runtime(_ObjC)
+tests.test("String.UTF16View.Index/Strideable")
+  .forEach(in: utfTests) {
+  test in
+
+  func allIndices<C : Collection>(of c: C) -> [C.Index]
+  where C.Indices.Iterator.Element == C.Index
+  {
+    var result = Array(c.indices)
+    result.append(c.endIndex)
+    return result
+  }
+
+  checkStrideable(
+    instances: allIndices(of: test.string.utf16),
+    distances: Array(0..<test.string.utf16.count),
+    distanceOracle: { $1 - $0 })
+}
+#endif
+
+tests.test("String.UTF8View/Collection")
+  .forEach(in: utfTests) {
+  test in
+
+  // FIXME(ABI): should be `checkBidirectionalCollection`.
+  checkForwardCollection(test.utf8, test.string.utf8) { $0 == $1 }
+}
+
+#if _runtime(_Native)
+tests.test("String.UTF16View/BidirectionalCollection")
+  .forEach(in: utfTests) {
+  test in
+
+  checkBidirectionalCollection(test.utf16, test.string.utf16) { $0 == $1 }
+}
+#else
+tests.test("String.UTF16View/RandomAccessCollection")
+  .forEach(in: utfTests) {
+  test in
+
+  checkRandomAccessCollection(test.utf16, test.string.utf16) { $0 == $1 }
+}
+#endif
+
+tests.test("String.UTF32View/BidirectionalCollection")
+  .forEach(in: utfTests) {
+  test in
+
+  checkBidirectionalCollection(
+    test.unicodeScalars, test.string.unicodeScalars) { $0 == $1 }
+}
 
 runAllTests()

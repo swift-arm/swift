@@ -112,7 +112,7 @@ extension _ArrayBuffer {
 
   /// Convert to an NSArray.
   ///
-  /// O(1) if the element type is bridged verbatim, O(N) otherwise.
+  /// O(1) if the element type is bridged verbatim, O(*n*) otherwise.
   public func _asCocoaArray() -> _NSArrayCore {
     return _fastPath(_isNative) ? _native._asCocoaArray() : _nonNative
   }
@@ -204,7 +204,8 @@ extension _ArrayBuffer {
       location: bounds.lowerBound,
       length: bounds.upperBound - bounds.lowerBound)
 
-    let buffer = UnsafeMutablePointer<AnyObject>(target)
+    let buffer = UnsafeMutableRawPointer(target).assumingMemoryBound(
+      to: AnyObject.self)
     
     // Copies the references out of the NSArray without retaining them
     nonNative.getObjects(buffer, range: nsSubRange)
@@ -242,9 +243,11 @@ extension _ArrayBuffer {
         cocoa.contiguousStorage(Range(self.indices))
 
       if let cocoaStorageBaseAddress = cocoaStorageBaseAddress {
+        let basePtr = UnsafeMutableRawPointer(cocoaStorageBaseAddress)
+          .assumingMemoryBound(to: Element.self)
         return _SliceBuffer(
           owner: nonNative,
-          subscriptBaseAddress: UnsafeMutablePointer(cocoaStorageBaseAddress),
+          subscriptBaseAddress: basePtr,
           indices: bounds,
           hasNativeBuffer: false)
       }
@@ -255,7 +258,8 @@ extension _ArrayBuffer {
 
       // Tell Cocoa to copy the objects into our storage
       cocoa.buffer.getObjects(
-        UnsafeMutablePointer(result.firstElementAddress),
+        UnsafeMutableRawPointer(result.firstElementAddress)
+          .assumingMemoryBound(to: AnyObject.self),
         range: _SwiftNSRange(location: bounds.lowerBound, length: boundsCount))
 
       return _SliceBuffer(result, shiftedToStartIndex: bounds.lowerBound)
@@ -390,7 +394,7 @@ extension _ArrayBuffer {
   /// underlying contiguous storage.  If no such storage exists, it is
   /// created on-demand.
   public func withUnsafeBufferPointer<R>(
-    _ body: @noescape (UnsafeBufferPointer<Element>) throws -> R
+    _ body: (UnsafeBufferPointer<Element>) throws -> R
   ) rethrows -> R {
     if _fastPath(_isNative) {
       defer { _fixLifetime(self) }
@@ -405,7 +409,7 @@ extension _ArrayBuffer {
   ///
   /// - Precondition: Such contiguous storage exists or the buffer is empty.
   public mutating func withUnsafeMutableBufferPointer<R>(
-    _ body: @noescape (UnsafeMutableBufferPointer<Element>) throws -> R
+    _ body: (UnsafeMutableBufferPointer<Element>) throws -> R
   ) rethrows -> R {
     _sanityCheck(
       _isNative || count == 0,
@@ -432,12 +436,12 @@ extension _ArrayBuffer {
   /// A value that identifies the storage used by the buffer.  Two
   /// buffers address the same elements when they have the same
   /// identity and count.
-  public var identity: UnsafePointer<Void> {
+  public var identity: UnsafeRawPointer {
     if _isNative {
       return _native.identity
     }
     else {
-      return unsafeAddress(of: _nonNative)
+      return UnsafeRawPointer(Unmanaged.passUnretained(_nonNative).toOpaque())
     }
   }
   

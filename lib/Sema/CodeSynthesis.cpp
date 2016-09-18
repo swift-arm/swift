@@ -354,9 +354,11 @@ static Expr *buildArgumentForwardingExpr(ArrayRef<ParamDecl*> params,
     labelLocs.push_back(SourceLoc());
   }
   
-  // A single unlabelled value is not a tuple.
-  if (args.size() == 1 && labels[0].empty())
-    return args[0];
+  // A single unlabeled value is not a tuple.
+  if (args.size() == 1 && labels[0].empty()) {
+    return new (ctx) ParenExpr(SourceLoc(), args[0], SourceLoc(),
+                               /*hasTrailingClosure=*/false);
+  }
   
   return TupleExpr::create(ctx, SourceLoc(), args, labels, labelLocs,
                            SourceLoc(), false, IsImplicit);
@@ -477,8 +479,8 @@ static Expr *buildStorageReference(
 
   if (auto subscript = dyn_cast<SubscriptDecl>(storage)) {
     Expr *indices = referenceContext.getIndexRefExpr(ctx, subscript);
-    return new (ctx) SubscriptExpr(selfDRE, indices, storage,
-                                   IsImplicit, semantics);
+    return SubscriptExpr::create(ctx, selfDRE, indices, storage,
+                                 IsImplicit, semantics);
   }
 
   // This is a potentially polymorphic access, which is unnecessary;
@@ -1917,9 +1919,9 @@ ConstructorDecl *swift::createImplicitConstructor(TypeChecker &tc,
                                                   ImplicitConstructorKind ICK) {
   ASTContext &context = tc.Context;
   SourceLoc Loc = decl->getLoc();
-  Accessibility accessLevel = decl->getFormalAccess();
-  if (!decl->hasClangNode())
-    accessLevel = std::min(accessLevel, Accessibility::Internal);
+  auto accessLevel = Accessibility::Internal;
+  if (decl->hasClangNode())
+    accessLevel = std::max(accessLevel, decl->getFormalAccess());
 
   // Determine the parameter type of the implicit constructor.
   SmallVector<ParamDecl*, 8> params;
@@ -1955,6 +1957,7 @@ ConstructorDecl *swift::createImplicitConstructor(TypeChecker &tc,
                                           Loc, var->getName(),
                                           Loc, var->getName(), varType, decl);
       arg->setImplicit();
+      
       params.push_back(arg);
     }
   }
@@ -2114,8 +2117,11 @@ swift::createDesignatedInitOverride(TypeChecker &tc,
                               /*GenericParams=*/nullptr, classDecl);
 
   ctor->setImplicit();
-  ctor->setAccessibility(std::min(classDecl->getFormalAccess(),
-                                  superclassCtor->getFormalAccess()));
+
+  Accessibility access = classDecl->getFormalAccess();
+  access = std::max(access, Accessibility::Internal);
+  access = std::min(access, superclassCtor->getFormalAccess());
+  ctor->setAccessibility(access);
 
   // Make sure the constructor is only as available as its superclass's
   // constructor.
@@ -2184,7 +2190,10 @@ swift::createDesignatedInitOverride(TypeChecker &tc,
     return ctor;
   }
 
-  Expr *superCall = CallExpr::create(ctx, ctorRef, ctorArgs, /*Implicit=*/true);
+  Expr *superCall =
+    CallExpr::create(ctx, ctorRef, ctorArgs,
+                     superclassCtor->getFullName().getArgumentNames(), { },
+                     /*hasTrailingClosure=*/false, /*implicit=*/true);
   if (superclassCtor->hasThrows()) {
     superCall = new (ctx) TryExpr(SourceLoc(), superCall, Type(),
                                   /*Implicit=*/true);

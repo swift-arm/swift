@@ -205,10 +205,32 @@ public protocol _ExpressibleByBuiltinFloatLiteral {
   init(_builtinFloatLiteral value: _MaxBuiltinFloatType)
 }
 
-/// Conforming types can be initialized with floating point literals.
+/// A type that can be initialized with a floating-point literal.
+///
+/// The standard library floating-point types---`Float`, `Double`, and
+/// `Float80` where available---all conform to the `ExpressibleByFloatLiteral`
+/// protocol. You can initialize a variable or constant of any of these types
+/// by assigning a floating-point literal.
+///
+///     // Type inferred as 'Double'
+///     let threshold = 6.0
+///
+///     // An array of 'Double'
+///     let measurements = [2.2, 4.1, 3.65, 4.2, 9.1]
+///
+/// Conforming to ExpressibleByFloatLiteral
+/// =======================================
+///
+/// To add `ExpressibleByFloatLiteral` conformance to your custom type,
+/// implement the required initializer.
 public protocol ExpressibleByFloatLiteral {
+  /// A type that can represent a floating-point literal.
+  ///
+  /// Valid types for `FloatLiteralType` are `Float`, `Double`, and `Float80`
+  /// where available.
   associatedtype FloatLiteralType : _ExpressibleByBuiltinFloatLiteral
-  /// Create an instance initialized to `value`.
+  
+  /// Creates an instance initialized to the specified floating-point value.
   init(floatLiteral value: FloatLiteralType)
 }
 
@@ -262,7 +284,7 @@ public protocol _ExpressibleByBuiltinUnicodeScalarLiteral {
 ///     // Prints "ñ"
 ///
 /// Conforming to ExpressibleByUnicodeScalarLiteral
-/// =============================================
+/// ===============================================
 ///
 /// To add `ExpressibleByUnicodeScalarLiteral` conformance to your custom type,
 /// implement the required initializer.
@@ -305,7 +327,7 @@ public protocol _ExpressibleByBuiltinExtendedGraphemeClusterLiteral
 ///     // Prints "❄︎"
 ///
 /// Conforming to ExpressibleByExtendedGraphemeClusterLiteral
-/// =======================================================
+/// =========================================================
 ///
 /// To add `ExpressibleByExtendedGraphemeClusterLiteral` conformance to your
 /// custom type, implement the required initializer.
@@ -349,7 +371,7 @@ public protocol _ExpressibleByBuiltinUTF16StringLiteral
 ///     let picnicGuest = "Deserving porcupine"
 ///
 /// Conforming to ExpressibleByStringLiteral
-/// ======================================
+/// ========================================
 ///
 /// To add `ExpressibleByStringLiteral` conformance to your custom type,
 /// implement the required initializer.
@@ -456,7 +478,7 @@ public protocol ExpressibleByStringLiteral
 ///     // Prints "Zero integers: []"
 ///
 /// Conforming to ExpressibleByArrayLiteral
-/// =====================================
+/// =======================================
 ///
 /// Add the capability to be initialized with an array literal to your own
 /// custom types by declaring an `init(arrayLiteral:)` initializer. The
@@ -514,7 +536,7 @@ public protocol ExpressibleByArrayLiteral {
 ///   by assigning an instance of one of these types.
 ///
 /// Conforming to the ExpressibleByDictionaryLiteral Protocol
-/// =======================================================
+/// =========================================================
 ///
 /// To add the capability to be initialized with a dictionary literal to your
 /// own custom types, declare an `init(dictionaryLiteral:)` initializer. The
@@ -547,7 +569,7 @@ public protocol ExpressibleByDictionaryLiteral {
   associatedtype Key
   /// The value type of a dictionary literal.
   associatedtype Value
-  /// Create an instance initialized with `elements`.
+  /// Creates an instance initialized with the given key-value pairs.
   init(dictionaryLiteral elements: (Key, Value)...)
 }
 
@@ -565,7 +587,7 @@ public protocol ExpressibleByDictionaryLiteral {
 ///     // Prints "One cookie: $2, 3 cookies: $6."
 ///
 /// Conforming to the ExpressibleByStringInterpolation Protocol
-/// =========================================================
+/// ===========================================================
 ///
 /// To use string interpolation to initialize instances of your custom type,
 /// implement the required initializers for `ExpressibleByStringInterpolation`
@@ -591,6 +613,7 @@ public protocol ExpressibleByDictionaryLiteral {
 ///           String(stringInterpolationSegment: " cookies: $"),
 ///           String(stringInterpolationSegment: price * number),
 ///           String(stringInterpolationSegment: "."))
+@available(*, deprecated, message: "it will be replaced or redesigned in Swift 4.0.  Instead of conforming to 'ExpressibleByStringInterpolation', consider adding an 'init(_:String)'")
 public protocol ExpressibleByStringInterpolation {
   /// Creates an instance by concatenating the given values.
   ///
@@ -714,7 +737,7 @@ public typealias ArrayLiteralConvertible
 @available(*, deprecated, renamed: "ExpressibleByDictionaryLiteral")
 public typealias DictionaryLiteralConvertible
   = ExpressibleByDictionaryLiteral
-@available(*, deprecated, renamed: "ExpressibleByStringInterpolation")
+@available(*, deprecated, message: "it will be replaced or redesigned in Swift 4.0.  Instead of conforming to 'StringInterpolationConvertible', consider adding an 'init(_:String)'")
 public typealias StringInterpolationConvertible
   = ExpressibleByStringInterpolation
 @available(*, deprecated, renamed: "_ExpressibleByColorLiteral")

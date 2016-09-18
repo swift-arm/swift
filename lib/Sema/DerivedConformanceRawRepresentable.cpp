@@ -133,7 +133,9 @@ static VarDecl *deriveRawRepresentable_raw(TypeChecker &tc,
   // Define the getter.
   auto getterDecl = declareDerivedPropertyGetter(tc, parentDecl, enumDecl,
                                                  rawInterfaceType,
-                                                 rawType);
+                                                 rawType,
+                                                 /*isStatic=*/false,
+                                                 /*isFinal=*/false);
   getterDecl->setBodySynthesizer(&deriveBodyRawRepresentable_raw);
 
   // Define the property.
@@ -144,7 +146,9 @@ static VarDecl *deriveRawRepresentable_raw(TypeChecker &tc,
                                      C.Id_rawValue,
                                      rawInterfaceType,
                                      rawType,
-                                     getterDecl);
+                                     getterDecl,
+                                     /*isStatic=*/false,
+                                     /*isFinal=*/false);
   
   auto dc = cast<IterableDeclContext>(parentDecl);
   dc->addMember(getterDecl);
@@ -336,7 +340,8 @@ static ConstructorDecl *deriveRawRepresentable_init(TypeChecker &tc,
   }
   initDecl->setInterfaceType(allocIfaceType);
   initDecl->setInitializerInterfaceType(initIfaceType);
-  initDecl->setAccessibility(enumDecl->getFormalAccess());
+  initDecl->setAccessibility(std::max(Accessibility::Internal,
+                                      enumDecl->getFormalAccess()));
 
   // If the enum was not imported, the derived conformance is either from the
   // enum itself or an extension, in which case we will emit the declaration

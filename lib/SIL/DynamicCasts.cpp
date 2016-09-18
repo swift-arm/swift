@@ -45,16 +45,42 @@ mayBridgeToObjectiveC(Module *M, CanType T) {
   return false;
 }
 
+static bool
+mustBridgeToSwiftValueBox(Module *M, CanType T) {
+  // If the target type is either an unknown dynamic type, or statically
+  // known to bridge, the cast may succeed.
+  if (T->hasArchetype())
+    return false;
+
+  if (T->isAnyExistentialType())
+    return false;
+
+  // getBridgedToObjC() might return a null-type for bridged foundation types
+  // during compiling the standard library. Exclude this case here.
+  if (auto N = T->getAnyNominal())
+    if (M->getASTContext().isStandardLibraryTypeBridgedInFoundation(N))
+      return false;
+
+  auto bridgeTy  = M->getASTContext().getBridgedToObjC(M, T, nullptr);
+  if (!bridgeTy.hasValue())
+    return false;
+
+  if (bridgeTy->isNull())
+    return true;
+
+  return false;
+}
+
 static bool canClassOrSuperclassesHaveExtensions(ClassDecl *CD,
                                                  bool isWholeModuleOpts) {
   while (CD) {
-    // Public classes can always be extended
-    if (CD->getEffectiveAccess() == Accessibility::Public)
+    // Open classes can always be extended
+    if (CD->getEffectiveAccess() == Accessibility::Open)
       return true;
 
-    // Internal classes can be extended, if we are not in
+    // Internal and public classes can be extended, if we are not in
     // whole-module-optimization mode.
-    if (CD->getEffectiveAccess() == Accessibility::Internal &&
+    if (CD->getEffectiveAccess() >= Accessibility::Internal &&
         !isWholeModuleOpts)
       return true;
 
@@ -147,6 +173,45 @@ classifyDynamicCastToProtocol(CanType source,
   return DynamicCastFeasibility::MaySucceed;
 }
 
+static DynamicCastFeasibility
+classifyDynamicCastFromProtocol(ModuleDecl *M, CanType source, CanType target,
+                                bool isWholeModuleOpts) {
+  assert(source.isExistentialType() &&
+         "source should be an existential type");
+
+  if (source == target)
+    return DynamicCastFeasibility::WillSucceed;
+
+  // Casts from class existential into a non-class can never succeed.
+  if (source->isClassExistentialType() &&
+      !target.isAnyExistentialType() &&
+      !target.getClassOrBoundGenericClass() &&
+      !isa<ArchetypeType>(target) &&
+      !mayBridgeToObjectiveC(M, target)) {
+    assert((target.getEnumOrBoundGenericEnum() ||
+            target.getStructOrBoundGenericStruct() ||
+            isa<TupleType>(target) ||
+            isa<SILFunctionType>(target) ||
+            isa<FunctionType>(target) ||
+            isa<MetatypeType>(target)) &&
+           "Target should be an enum, struct, tuple, metatype or function type");
+    return DynamicCastFeasibility::WillFail;
+  }
+
+  // TODO: maybe prove that certain conformances are impossible?
+
+  return DynamicCastFeasibility::MaySucceed;
+}
+
+/// Returns the existential type associated with the Hashable
+/// protocol, if it can be found.
+static CanType getHashableExistentialType(Module *M) {
+  auto hashable =
+    M->getASTContext().getProtocol(KnownProtocolKind::Hashable);
+  if (!hashable) return CanType();
+  return hashable->getDeclaredType()->getCanonicalType();
+}
+
 /// Check if a given type conforms to _BridgedToObjectiveC protocol.
 bool swift::isObjectiveCBridgeable(Module *M, CanType Ty) {
   // Retrieve the _BridgedToObjectiveC protocol.
@@ -183,6 +248,59 @@ static bool canDynamicallyBeOptionalType(CanType type) {
   assert(!type.getAnyOptionalObjectType());
   return (isa<ArchetypeType>(type) || type.isExistentialType())
       && !type.isAnyClassReferenceType();
+}
+
+/// Given two class types, check whether there's a hierarchy relationship
+/// between them.
+static DynamicCastFeasibility
+classifyClassHierarchyCast(CanType source, CanType target) {
+  // Upcast: if the target type statically matches a type in the
+  // source type's hierarchy, this is a static upcast and the cast
+  // will always succeed.
+  if (target->isExactSuperclassOf(source, nullptr))
+    return DynamicCastFeasibility::WillSucceed;
+
+  // Upcast: if the target type might dynamically match a type in the
+  // source type's hierarchy, this might be an upcast, in which
+  // case the cast might succeed.
+  if (target->isBindableToSuperclassOf(source, nullptr))
+    return DynamicCastFeasibility::MaySucceed;
+
+  // Downcast: if the source type might dynamically match a type in the
+  // target type's hierarchy, this might be a downcast, in which case
+  // the cast might succeed.  Note that this also covers the case where
+  // the source type statically matches a type in the target type's
+  // hierarchy; since it's a downcast, the cast still at best might succeed.
+  if (source->isBindableToSuperclassOf(target, nullptr))
+    return DynamicCastFeasibility::MaySucceed;
+
+  // Otherwise, the classes are unrelated and the cast will fail (at least
+  // on these grounds).
+  return DynamicCastFeasibility::WillFail;
+}
+
+static CanType getNSBridgedClassOfCFClass(Module *M, CanType type) {
+  if (auto classDecl = type->getClassOrBoundGenericClass()) {
+    if (classDecl->getForeignClassKind() == ClassDecl::ForeignKind::CFType) {
+      if (auto bridgedAttr =
+            classDecl->getAttrs().getAttribute<ObjCBridgedAttr>()) {
+        auto bridgedClass = bridgedAttr->getObjCClass();
+        // TODO: this should handle generic classes properly.
+        if (!bridgedClass->isGenericContext()) {
+          return bridgedClass->getDeclaredInterfaceType()->getCanonicalType();
+        }
+      }
+    }
+  }
+  return CanType();
+}
+
+static bool isCFBridgingConversion(Module *M, SILType sourceType,
+                                   SILType targetType) {
+  return (sourceType.getSwiftRValueType() ==
+            getNSBridgedClassOfCFClass(M, targetType.getSwiftRValueType()) ||
+          targetType.getSwiftRValueType() ==
+            getNSBridgedClassOfCFClass(M, sourceType.getSwiftRValueType()));
 }
 
 /// Try to classify the dynamic-cast relationship between two types.
@@ -237,23 +355,37 @@ swift::classifyDynamicCast(Module *M,
         target.isExistentialType())
       return classifyDynamicCastToProtocol(source, target, isWholeModuleOpts);
 
-    // Casts from class existential into a non-class can never succeed.
-    if (source->isClassExistentialType() &&
-        !target.isAnyExistentialType() &&
-        !target.getClassOrBoundGenericClass() &&
-        !isa<ArchetypeType>(target) &&
-        !mayBridgeToObjectiveC(M, target)) {
-      assert((target.getEnumOrBoundGenericEnum() ||
-              target.getStructOrBoundGenericStruct() ||
-              isa<TupleType>(target) ||
-              isa<SILFunctionType>(target) ||
-              isa<FunctionType>(target) ||
-              isa<MetatypeType>(target)) &&
-             "Target should be an enum, struct, tuple, metatype or function type");
-      return DynamicCastFeasibility::WillFail;
-    }
+    // Check conversions from protocol types to non-protocol types.
+    if (source.isExistentialType() &&
+        !target.isExistentialType())
+      return classifyDynamicCastFromProtocol(M, source, target,
+                                             isWholeModuleOpts);
 
     return DynamicCastFeasibility::MaySucceed;
+  }
+
+  // Casts from AnyHashable.
+  if (auto sourceStruct = dyn_cast<StructType>(source)) {
+    if (sourceStruct->getDecl() == M->getASTContext().getAnyHashableDecl()) {
+      if (auto hashable = getHashableExistentialType(M)) {
+        // Succeeds if Hashable can be cast to the target type.
+        return classifyDynamicCastFromProtocol(M, hashable, target,
+                                               isWholeModuleOpts);
+      }
+    }
+  }
+
+  // Casts to AnyHashable.
+  if (auto targetStruct = dyn_cast<StructType>(target)) {
+    if (targetStruct->getDecl() == M->getASTContext().getAnyHashableDecl()) {
+      // Succeeds if the source type can be dynamically cast to Hashable.
+      // Hashable is not actually a legal existential type right now, but
+      // the check doesn't care about that.
+      if (auto hashable = getHashableExistentialType(M)) {
+        return classifyDynamicCastToProtocol(source, hashable,
+                                             isWholeModuleOpts);
+      }
+    }
   }
 
   // Metatype casts.
@@ -314,7 +446,7 @@ swift::classifyDynamicCast(Module *M,
     // cast.
     if (source.getClassOrBoundGenericClass() &&
         target.getClassOrBoundGenericClass())
-      return classifyDynamicCast(M, source, target, false, isWholeModuleOpts);
+      return classifyClassHierarchyCast(source, target);
 
     // Different structs cannot be cast to each other.
     if (source.getStructOrBoundGenericStruct() &&
@@ -331,7 +463,7 @@ swift::classifyDynamicCast(Module *M,
     // If we don't know any better, assume that the cast may succeed.
     return DynamicCastFeasibility::MaySucceed;
   }
-  
+
   // Function casts.
   if (auto sourceFunction = dyn_cast<FunctionType>(source)) {
     if (auto targetFunction = dyn_cast<FunctionType>(target)) {
@@ -402,17 +534,44 @@ swift::classifyDynamicCast(Module *M,
         }
       }
 
+      // Try a hierarchy cast.  If that isn't failure, we can report it.
+      auto hierarchyResult = classifyClassHierarchyCast(source, target);
+      if (hierarchyResult != DynamicCastFeasibility::WillFail)
+        return hierarchyResult;
 
-      if (target->isExactSuperclassOf(source, nullptr))
-        return DynamicCastFeasibility::WillSucceed;
-      if (target->isBindableToSuperclassOf(source, nullptr))
-        return DynamicCastFeasibility::MaySucceed;
-      if (source->isBindableToSuperclassOf(target, nullptr))
-        return DynamicCastFeasibility::MaySucceed;
+      // As a backup, consider whether either type is a CF class type
+      // with an NS bridged equivalent.
+      CanType bridgedSource = getNSBridgedClassOfCFClass(M, source);
+      CanType bridgedTarget = getNSBridgedClassOfCFClass(M, target);
 
-      // FIXME: bridged types, e.g. CF <-> NS (but not for metatypes).
+      // If neither type qualifies, we're done.
+      if (!bridgedSource && !bridgedTarget)
+        return DynamicCastFeasibility::WillFail;
+
+      // Otherwise, map over to the bridged types and try to answer the
+      // question there.
+      if (bridgedSource) source = bridgedSource;
+      if (bridgedTarget) target = bridgedTarget;
+      return classifyDynamicCast(M, source, target, false, isWholeModuleOpts);
+    }
+
+    // Casts from a class into a non-class can never succeed if the target must
+    // be bridged to a SwiftValueBox. You would need an AnyObject source for
+    // that.
+    if (!target.isAnyExistentialType() &&
+        !target.getClassOrBoundGenericClass() &&
+        !isa<ArchetypeType>(target) &&
+        mustBridgeToSwiftValueBox(M, target)) {
+      assert((target.getEnumOrBoundGenericEnum() ||
+              target.getStructOrBoundGenericStruct() ||
+              isa<TupleType>(target) ||
+              isa<SILFunctionType>(target) ||
+              isa<FunctionType>(target) ||
+              isa<MetatypeType>(target)) &&
+             "Target should be an enum, struct, tuple, metatype or function type");
       return DynamicCastFeasibility::WillFail;
     }
+
 
     // In the Objective-C runtime, class metatypes are also class instances.
     // The cast may succeed if the target type can be inhabited by a class
@@ -438,6 +597,22 @@ swift::classifyDynamicCast(Module *M,
 
   // FIXME: Be more careful with bridging conversions from
   // NSArray, NSDictionary and NSSet as they may fail?
+
+  // We know that a cast from Int -> class foobar will fail.
+  if (targetClass &&
+      !source.isAnyExistentialType() &&
+      !source.getClassOrBoundGenericClass() &&
+      !isa<ArchetypeType>(source) &&
+      mustBridgeToSwiftValueBox(M, source)) {
+      assert((source.getEnumOrBoundGenericEnum() ||
+              source.getStructOrBoundGenericStruct() ||
+              isa<TupleType>(source) ||
+              isa<SILFunctionType>(source) ||
+              isa<FunctionType>(source) ||
+              isa<MetatypeType>(source)) &&
+             "Source should be an enum, struct, tuple, metatype or function type");
+    return DynamicCastFeasibility::WillFail;
+  }
 
   // Check if there might be a bridging conversion.
   if (source->isBridgeableObjectType() && mayBridgeToObjectiveC(M, target)) {
@@ -480,7 +655,6 @@ swift::classifyDynamicCast(Module *M,
   // Check for a viable collection cast.
   if (auto sourceStruct = dyn_cast<BoundGenericStructType>(source)) {
     if (auto targetStruct = dyn_cast<BoundGenericStructType>(target)) {
-
       // Both types have to be the same kind of collection.
       auto typeDecl = sourceStruct->getDecl();
       if (typeDecl == targetStruct->getDecl()) {
@@ -573,9 +747,11 @@ namespace {
     SILModule &M;
     ASTContext &Ctx;
     SILLocation Loc;
+    Module *SwiftModule;
   public:
     CastEmitter(SILBuilder &B, Module *swiftModule, SILLocation loc)
-      : B(B), M(B.getModule()), Ctx(M.getASTContext()), Loc(loc) {}
+      : B(B), M(B.getModule()), Ctx(M.getASTContext()), Loc(loc),
+        SwiftModule(swiftModule) {}
 
     Source emitTopLevel(Source source, Target target) {
       unsigned sourceOptDepth = getOptionalDepth(source.FormalType);
@@ -656,8 +832,8 @@ namespace {
       }
       assert(!target.FormalType.getAnyOptionalObjectType());
 
-      // The only other thing we return WillSucceed for currently is
-      // an upcast.
+      // The only other things we return WillSucceed for currently is
+      // an upcast or CF/NS toll-free-bridging conversion.
       // FIXME: Upcasts between existential metatypes are not handled yet.
       // We should generate for it:
       // %openedSrcMetatype = open_existential srcMetatype
@@ -669,7 +845,12 @@ namespace {
       } else {
         value = getOwnedScalar(source, srcTL);
       }
-      value = B.createUpcast(Loc, value, target.LoweredType.getObjectType());
+      auto targetTy = target.LoweredType;
+      if (isCFBridgingConversion(SwiftModule, targetTy, value->getType())) {
+        value = B.createUncheckedRefCast(Loc, value, targetTy.getObjectType());
+      } else {
+        value = B.createUpcast(Loc, value, targetTy.getObjectType());
+      }
       return putOwnedScalar(value, target);
     }
 

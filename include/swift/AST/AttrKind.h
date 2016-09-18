@@ -23,7 +23,7 @@
 namespace swift {
 
 /// The associativity of a binary operator.
-enum class Associativity {
+enum class Associativity : unsigned char {
   /// Non-associative operators cannot be written next to other
   /// operators with the same precedence.  Relational operators are
   /// typically non-associative.
@@ -55,8 +55,11 @@ enum class Accessibility : uint8_t {
   FilePrivate,
   /// Internal access is limited to the current module.
   Internal,
-  /// Public access is not limited.
-  Public
+  /// Public access is not limited, but some capabilities may be
+  /// restricted outside of the current module.
+  Public,
+  /// Open access is not limited, and all capabilities are unrestricted.
+  Open,
 };
 
 enum class InlineKind : uint8_t {

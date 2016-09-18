@@ -68,7 +68,7 @@ namespace {
                          unsigned &bestIdx,
                          bool &doNotDiagnoseMatches);
 
-    bool checkWitnessAccessibility(Accessibility *requiredAccess,
+    bool checkWitnessAccessibility(const DeclContext *&requiredAccessScope,
                                    ValueDecl *requirement,
                                    ValueDecl *witness,
                                    bool *isSetter);
@@ -77,7 +77,7 @@ namespace {
                                   ValueDecl *witness,
                                   AvailabilityContext *requirementInfo);
 
-    RequirementCheck checkWitness(Accessibility requiredAccess,
+    RequirementCheck checkWitness(const DeclContext *requiredAccessScope,
                                   ValueDecl *requirement,
                                   RequirementMatch match);
   };
@@ -392,24 +392,24 @@ namespace {
   struct RequirementCheck {
     CheckKind Kind;
 
-    /// The required accessibility, if the check failed due to the
+    /// The required access scope, if the check failed due to the
     /// witness being less accessible than the requirement.
-    Accessibility RequiredAccess;
+    const DeclContext *RequiredAccessScope;
 
     /// The required availability, if the check failed due to the
     /// witness being less available than the requirement.
     AvailabilityContext RequiredAvailability;
 
     RequirementCheck(CheckKind kind)
-      : Kind(kind), RequiredAccess(Accessibility::Public),
+      : Kind(kind), RequiredAccessScope(nullptr),
         RequiredAvailability(AvailabilityContext::alwaysAvailable()) { }
 
-    RequirementCheck(CheckKind kind, Accessibility requiredAccess)
-      : Kind(kind), RequiredAccess(requiredAccess),
+    RequirementCheck(CheckKind kind, const DeclContext *requiredAccessScope)
+      : Kind(kind), RequiredAccessScope(requiredAccessScope),
         RequiredAvailability(AvailabilityContext::alwaysAvailable()) { }
 
     RequirementCheck(CheckKind kind, AvailabilityContext requiredAvailability)
-      : Kind(kind), RequiredAccess(Accessibility::Public),
+      : Kind(kind), RequiredAccessScope(nullptr),
         RequiredAvailability(requiredAvailability) { }
   };
 }
@@ -899,7 +899,7 @@ matchWitness(TypeChecker &tc,
 static RequirementMatch
 matchWitness(TypeChecker &tc,
              ProtocolDecl *proto,
-             NormalProtocolConformance *conformance,
+             ProtocolConformance *conformance,
              DeclContext *dc, ValueDecl *req, ValueDecl *witness) {
   using namespace constraints;
 
@@ -942,18 +942,20 @@ matchWitness(TypeChecker &tc,
     if (witness->getDeclContext()->isTypeContext()) {
       std::tie(openedFullWitnessType, openWitnessType) 
         = cs->getTypeOfMemberReference(selfTy, witness,
-                                      /*isTypeReference=*/false,
-                                      /*isDynamicResult=*/false,
-                                      witnessLocator,
-                                      /*base=*/nullptr,
-                                      /*opener=*/nullptr);
+                                       /*isTypeReference=*/false,
+                                       /*isDynamicResult=*/false,
+                                       FunctionRefKind::DoubleApply,
+                                       witnessLocator,
+                                       /*base=*/nullptr,
+                                       /*opener=*/nullptr);
     } else {
       std::tie(openedFullWitnessType, openWitnessType) 
         = cs->getTypeOfReference(witness,
-                                /*isTypeReference=*/false,
-                                /*isDynamicResult=*/false,
-                                witnessLocator,
-                                /*base=*/nullptr);
+                                 /*isTypeReference=*/false,
+                                 /*isDynamicResult=*/false,
+                                 FunctionRefKind::DoubleApply,
+                                 witnessLocator,
+                                 /*base=*/nullptr);
     }
     openWitnessType = openWitnessType->getRValueType();
     
@@ -969,6 +971,7 @@ matchWitness(TypeChecker &tc,
       = cs->getTypeOfMemberReference(selfTy, req,
                                      /*isTypeReference=*/false,
                                      /*isDynamicResult=*/false,
+                                     FunctionRefKind::DoubleApply,
                                      reqLocator,
                                      /*base=*/nullptr,
                                      &replacements);
@@ -1211,38 +1214,52 @@ bool WitnessChecker::findBestWitness(ValueDecl *requirement,
 }
 
 bool WitnessChecker::
-checkWitnessAccessibility(Accessibility *requiredAccess,
+checkWitnessAccessibility(const DeclContext *&requiredAccessScope,
                           ValueDecl *requirement,
                           ValueDecl *witness,
                           bool *isSetter) {
   *isSetter = false;
 
-  // FIXME: Handle "private(set)" requirements.
-  *requiredAccess = std::min(Proto->getFormalAccess(), *requiredAccess);
+  const DeclContext *protoAccessScope = Proto->getFormalAccessScope(DC);
 
-  if (*requiredAccess == Accessibility::Private)
-    return false;
-
-  Accessibility witnessAccess = witness->getFormalAccess(DC);
-
-  // Leave a hole for old-style top-level operators to be declared 'private' for
-  // a fileprivate conformance.
-  if (witnessAccess == Accessibility::Private &&
-      witness->getDeclContext()->isModuleScopeContext()) {
-    witnessAccess = Accessibility::FilePrivate;
+  // FIXME: This is the same operation as TypeCheckDecl.cpp's
+  // TypeAccessScopeChecker::intersectAccess.
+  if (!requiredAccessScope) {
+    requiredAccessScope = protoAccessScope;
+  } else if (protoAccessScope) {
+    if (protoAccessScope->isChildContextOf(requiredAccessScope)) {
+      requiredAccessScope = protoAccessScope;
+    } else {
+      assert(requiredAccessScope == protoAccessScope ||
+             requiredAccessScope->isChildContextOf(protoAccessScope));
+    }
   }
 
-  if (witnessAccess < *requiredAccess)
-    return true;
+  const DeclContext *actualScopeToCheck = requiredAccessScope;
+  if (!witness->isAccessibleFrom(actualScopeToCheck)) {
+    // Special case: if we have `@testable import` of the witness's module,
+    // allow the witness to match if it would have matched for just this file.
+    // That is, if '@testable' allows us to see the witness here, it should
+    // allow us to see it anywhere, because any other client could also add
+    // their own `@testable import`.
+    if (auto parentFile = dyn_cast<SourceFile>(DC->getModuleScopeContext())) {
+      const Module *witnessModule = witness->getModuleContext();
+      if (parentFile->getParentModule() != witnessModule &&
+          parentFile->hasTestableImport(witnessModule) &&
+          witness->isAccessibleFrom(parentFile)) {
+        actualScopeToCheck = parentFile;
+      }
+    }
+
+    if (actualScopeToCheck == requiredAccessScope)
+      return true;
+  }
 
   if (requirement->isSettable(DC)) {
     *isSetter = true;
 
     auto ASD = cast<AbstractStorageDecl>(witness);
-    const DeclContext *accessDC = nullptr;
-    if (*requiredAccess == Accessibility::Internal)
-      accessDC = DC->getParentModule();
-    if (!ASD->isSetterAccessibleFrom(accessDC))
+    if (!ASD->isSetterAccessibleFrom(actualScopeToCheck))
       return true;
   }
 
@@ -1259,19 +1276,19 @@ checkWitnessAvailability(ValueDecl *requirement,
 }
 
 RequirementCheck WitnessChecker::
-checkWitness(Accessibility requiredAccess,
+checkWitness(const DeclContext *requiredAccessScope,
              ValueDecl *requirement,
              RequirementMatch match) {
   if (!match.OptionalAdjustments.empty())
     return CheckKind::OptionalityConflict;
 
   bool isSetter = false;
-  if (checkWitnessAccessibility(&requiredAccess, requirement,
+  if (checkWitnessAccessibility(requiredAccessScope, requirement,
                                 match.Witness, &isSetter)) {
     CheckKind kind = (isSetter
                       ? CheckKind::AccessibilityOfSetter
                       : CheckKind::Accessibility);
-    return RequirementCheck(kind, requiredAccess);
+    return RequirementCheck(kind, requiredAccessScope);
   }
 
   auto requiredAvailability = AvailabilityContext::alwaysAvailable();
@@ -1897,17 +1914,23 @@ void ConformanceChecker::recordTypeWitness(AssociatedTypeDecl *assocType,
 
   if (typeDecl) {
     // Check access.
-    Accessibility requiredAccess = Adoptee->getAnyNominal()->getFormalAccess();
+    const DeclContext *requiredAccessScope =
+        Adoptee->getAnyNominal()->getFormalAccessScope(DC);
     bool isSetter = false;
-    if (checkWitnessAccessibility(&requiredAccess, assocType, typeDecl,
+    if (checkWitnessAccessibility(requiredAccessScope, assocType, typeDecl,
                                   &isSetter)) {
       assert(!isSetter);
 
+      // Avoid relying on the lifetime of 'this'.
+      const DeclContext *DC = this->DC;
       diagnoseOrDefer(assocType, false,
-        [typeDecl, requiredAccess, assocType](
+        [DC, typeDecl, requiredAccessScope, assocType](
           TypeChecker &tc, NormalProtocolConformance *conformance) {
+        Accessibility requiredAccess =
+            accessibilityFromScopeForDiagnostics(requiredAccessScope);
         auto proto = conformance->getProtocol();
-        bool protoForcesAccess = (requiredAccess == proto->getFormalAccess());
+        bool protoForcesAccess =
+            (requiredAccessScope == proto->getFormalAccessScope(DC));
         auto diagKind = protoForcesAccess
                           ? diag::type_witness_not_accessible_proto
                           : diag::type_witness_not_accessible_type;
@@ -1960,7 +1983,14 @@ void ConformanceChecker::recordTypeWitness(AssociatedTypeDecl *assocType,
     // Inject the typealias into the nominal decl that conforms to the protocol.
     if (auto nominal = DC->getAsNominalTypeOrNominalTypeExtensionContext()) {
       TC.computeAccessibility(nominal);
-      aliasDecl->setAccessibility(nominal->getFormalAccess());
+      // FIXME: Ideally this would use the protocol's access too---that is,
+      // a typealias added for an internal protocol shouldn't need to be
+      // public---but that can be problematic if the same type conforms to two
+      // protocols with different access levels.
+      Accessibility aliasAccess = nominal->getFormalAccess();
+      aliasAccess = std::max(aliasAccess, Accessibility::Internal);
+      aliasDecl->setAccessibility(aliasAccess);
+
       if (nominal == DC) {
         nominal->addMember(aliasDecl);
       } else {
@@ -1990,6 +2020,8 @@ void ConformanceChecker::recordTypeWitness(AssociatedTypeDecl *assocType,
 static void diagnoseNoWitness(ValueDecl *Requirement, Type RequirementType,
                               NormalProtocolConformance *Conformance,
                               TypeChecker &TC) {
+  // FIXME: Try an ignore-access lookup?
+
   SourceLoc FixitLocation;
   SourceLoc TypeLoc;
   if (auto Extension = dyn_cast<ExtensionDecl>(Conformance->getDeclContext())) {
@@ -2138,8 +2170,9 @@ ConformanceChecker::resolveWitnessViaLookup(ValueDecl *requirement) {
         });
     }
 
-    Accessibility requiredAccess = Adoptee->getAnyNominal()->getFormalAccess();
-    auto check = checkWitness(requiredAccess, requirement, best);
+    const DeclContext *nominalAccessScope =
+        Adoptee->getAnyNominal()->getFormalAccessScope(DC);
+    auto check = checkWitness(nominalAccessScope, requirement, best);
 
     switch (check.Kind) {
     case CheckKind::Success:
@@ -2147,12 +2180,17 @@ ConformanceChecker::resolveWitnessViaLookup(ValueDecl *requirement) {
 
     case CheckKind::Accessibility:
     case CheckKind::AccessibilityOfSetter: {
+      // Avoid relying on the lifetime of 'this'.
+      const DeclContext *DC = this->DC;
       diagnoseOrDefer(requirement, false,
-        [witness, check, requirement](
+        [DC, witness, check, requirement](
           TypeChecker &tc, NormalProtocolConformance *conformance) {
+        Accessibility requiredAccess =
+            accessibilityFromScopeForDiagnostics(check.RequiredAccessScope);
+
         auto proto = conformance->getProtocol();
         bool protoForcesAccess =
-            (check.RequiredAccess == proto->getFormalAccess());
+            (check.RequiredAccessScope == proto->getFormalAccessScope(DC));
         auto diagKind = protoForcesAccess
                           ? diag::witness_not_accessible_proto
                           : diag::witness_not_accessible_type;
@@ -2162,9 +2200,9 @@ ConformanceChecker::resolveWitnessViaLookup(ValueDecl *requirement) {
                                 getRequirementKind(requirement),
                                 witness->getFullName(),
                                 isSetter,
-                                check.RequiredAccess,
+                                requiredAccess,
                                 proto->getName());
-        fixItAccessibility(diag, witness, check.RequiredAccess, isSetter);
+        fixItAccessibility(diag, witness, requiredAccess, isSetter);
       });
       break;
     }
@@ -4105,6 +4143,10 @@ bool TypeChecker::containsProtocol(Type T, ProtocolDecl *Proto,
   return false;
 }
 
+// FIXME: This is a bug-prone interface.
+/// Returns true if T conforms to Proto. For concrete conformances,
+/// Conformance is set to the lookup result, but for abstract
+/// conformances, Conformance is set to nullptr.
 bool TypeChecker::conformsToProtocol(Type T, ProtocolDecl *Proto,
                                      DeclContext *DC,
                                      ConformanceCheckOptions options,
@@ -4219,13 +4261,25 @@ void TypeChecker::useObjectiveCBridgeableConformances(DeclContext *dc,
       : TC(tc), DC(dc), Proto(proto) { }
 
     virtual Action walkToTypePre(Type ty) {
+      ConformanceCheckOptions options = ConformanceCheckFlags::InExpression
+          | ConformanceCheckFlags::Used
+          | ConformanceCheckFlags::SuppressDependencyTracking;
+
       // If we have a nominal type, "use" its conformance to
       // _ObjectiveCBridgeable if it has one.
-      if (ty->getAnyNominal()) {
-        ConformanceCheckOptions options = ConformanceCheckFlags::InExpression
-            | ConformanceCheckFlags::Used
-            | ConformanceCheckFlags::SuppressDependencyTracking;
+      if (auto *nominalDecl = ty->getAnyNominal()) {
         (void)TC.conformsToProtocol(ty, Proto, DC, options);
+
+        if (nominalDecl == TC.Context.getSetDecl() ||
+            nominalDecl == TC.Context.getDictionaryDecl()) {
+          auto args = ty->castTo<BoundGenericType>()->getGenericArgs();
+          if (!args.empty()) {
+            auto keyType = args[0];
+            auto *hashableProto =
+              TC.Context.getProtocol(KnownProtocolKind::Hashable);
+            (void)TC.conformsToProtocol(keyType, hashableProto, DC, options);
+          }
+        }
       }
 
       return Action::Continue;
@@ -4801,7 +4855,7 @@ void TypeChecker::checkConformancesInContext(DeclContext *dc,
 
 llvm::TinyPtrVector<ValueDecl *>
 TypeChecker::findWitnessedObjCRequirements(const ValueDecl *witness,
-                                           bool onlyFirstRequirement) {
+                                           bool anySingleRequirement) {
   llvm::TinyPtrVector<ValueDecl *> result;
 
   // Types don't infer @objc this way.
@@ -4809,28 +4863,74 @@ TypeChecker::findWitnessedObjCRequirements(const ValueDecl *witness,
 
   auto dc = witness->getDeclContext();
   auto name = witness->getFullName();
-  for (auto conformance : dc->getLocalConformances(ConformanceLookupKind::All,
-                                                   nullptr, /*sorted=*/true)) {
+  auto nominal = dc->getAsNominalTypeOrNominalTypeExtensionContext();
+  if (!nominal) return result;
+
+  for (auto proto : nominal->getAllProtocols()) {
     // We only care about Objective-C protocols.
-    auto proto = conformance->getProtocol();
     if (!proto->isObjC()) continue;
 
+    Optional<ProtocolConformance *> conformance;
     for (auto req : proto->lookupDirect(name, true)) {
       // Skip anything in a protocol extension.
       if (req->getDeclContext() != proto) continue;
 
       // Skip types.
       if (isa<TypeDecl>(req)) continue;
+      
+      // Dig out the conformance.
+      if (!conformance.hasValue()) {
+        SmallVector<ProtocolConformance *, 2> conformances;
+        nominal->lookupConformance(dc->getParentModule(), proto,
+                                   conformances);
+        if (conformances.size() == 1)
+          conformance = conformances.front();
+        else
+          conformance = nullptr;
+      }
+      if (!*conformance) continue;
 
       // Determine whether the witness for this conformance is in fact
       // our witness.
-      if (conformance->getWitness(req, this).getDecl() == witness) {
+      if ((*conformance)->getWitness(req, this).getDecl() == witness) {
         result.push_back(req);
-        if (onlyFirstRequirement) return result;
+        if (anySingleRequirement) return result;
+        continue;
+      }
+
+      // If we have an inherited conformance, check whether the potential
+      // witness matches the requirement.
+      // FIXME: for now, don't even try this with generics involved. We
+      // should be tracking how subclasses implement optional requirements,
+      // in which case the getWitness() check above would suffice.
+      if (req->getAttrs().hasAttribute<OptionalAttr>() &&
+          isa<InheritedProtocolConformance>(*conformance)) {
+        auto normal = (*conformance)->getRootNormalConformance();
+        if (!(*conformance)->getDeclContext()->getGenericSignatureOfContext() &&
+            !normal->getDeclContext()->getGenericSignatureOfContext() &&
+            matchWitness(*this, proto, *conformance, witness->getDeclContext(),
+                         req, const_cast<ValueDecl *>(witness)).Kind
+              == MatchKind::ExactMatch) {
+          result.push_back(req);
+          if (anySingleRequirement) return result;
+          continue;
+        }
       }
     }
   }
 
+  // Sort the results.
+  if (result.size() > 2) {
+    std::stable_sort(result.begin(), result.end(),
+                     [&](ValueDecl *lhs, ValueDecl *rhs) {
+                       ProtocolDecl *lhsProto
+                         = cast<ProtocolDecl>(lhs->getDeclContext());
+                       ProtocolDecl *rhsProto
+                         = cast<ProtocolDecl>(rhs->getDeclContext());
+                       return ProtocolType::compareProtocols(&lhsProto,
+                                                             &rhsProto) < 0;
+                     });
+  }
   return result;
 }
 
@@ -4876,9 +4976,6 @@ ValueDecl *TypeChecker::deriveProtocolRequirement(DeclContext *DC,
   case KnownProtocolKind::Hashable:
     return DerivedConformance::deriveHashable(*this, Decl, TypeDecl, Requirement);
     
-  case KnownProtocolKind::Error:
-    return DerivedConformance::deriveError(*this, Decl, TypeDecl, Requirement);
-
   case KnownProtocolKind::BridgedNSError:
     return DerivedConformance::deriveBridgedNSError(*this, Decl, TypeDecl,
                                                     Requirement);
@@ -4942,7 +5039,7 @@ DefaultWitnessChecker::resolveWitnessViaLookup(ValueDecl *requirement) {
 
     // Perform the same checks as conformance witness matching, but silently
     // ignore the candidate instead of diagnosing anything.
-    auto check = checkWitness(Accessibility::Public, requirement, best);
+    auto check = checkWitness(/*access: public*/nullptr, requirement, best);
     if (check.Kind != CheckKind::Success)
       return ResolveWitnessResult::ExplicitFailed;
 

@@ -104,6 +104,7 @@ enum class DescriptiveDeclKind : uint8_t {
   InfixOperator,
   PrefixOperator,
   PostfixOperator,
+  PrecedenceGroup,
   TypeAlias,
   GenericTypeParam,
   AssociatedType,  
@@ -287,6 +288,11 @@ class alignas(1 << DeclAlignInBits) Decl {
     /// once (either in its declaration, or once later), making it immutable.
     unsigned IsLet : 1;
 
+    /// \brief Whether this is an 'inout' parameter; this is preferable
+    /// to checking if the parameter type is an InOutType, because invalid
+    /// inout parameters have an error type.
+    unsigned IsInOut : 1;
+
     /// \brief Whether this vardecl has an initial value bound to it in a way
     /// that isn't represented in the AST with an initializer in the pattern
     /// binding.  This happens in cases like "for i in ...", switch cases, etc.
@@ -300,7 +306,7 @@ class alignas(1 << DeclAlignInBits) Decl {
     /// a.storage for lazy var a is a decl that cannot be accessed.
     unsigned IsUserAccessible : 1;
   };
-  enum { NumVarDeclBits = NumAbstractStorageDeclBits + 5 };
+  enum { NumVarDeclBits = NumAbstractStorageDeclBits + 6 };
   static_assert(NumVarDeclBits <= 32, "fits in an unsigned");
   
   class EnumElementDeclBitfields {
@@ -492,19 +498,18 @@ class alignas(1 << DeclAlignInBits) Decl {
   enum { NumEnumDeclBits = NumNominalTypeDeclBits + 2 };
   static_assert(NumEnumDeclBits <= 32, "fits in an unsigned");
   
-  class InfixOperatorDeclBitfields {
-    friend class InfixOperatorDecl;
+  class PrecedenceGroupDeclBitfields {
+    friend class PrecedenceGroupDecl;
     unsigned : NumDeclBits;
 
+    /// The group's associativity.  A value of the Associativity enum.
     unsigned Associativity : 2;
-    unsigned Precedence : 8;
-    unsigned Assignment : 1;
-    unsigned IsAssocImplicit : 1;
-    unsigned IsPrecedenceImplicit : 1;
-    unsigned IsAssignmentImplicit : 1;
+
+    /// Is this an assignment operator?
+    unsigned IsAssignment : 1;
   };
-  enum { NumInfixOperatorDeclBits = NumDeclBits + 14 };
-  static_assert(NumInfixOperatorDeclBits <= 32, "fits in an unsigned");
+  enum { NumPrecedenceGroupDeclBits = NumDeclBits + 11 };
+  static_assert(NumPrecedenceGroupDeclBits <= 32, "fits in an unsigned");
 
   class AssociatedTypeDeclBitfields {
     friend class AssociatedTypeDecl;
@@ -571,7 +576,7 @@ protected:
     StructDeclBitfields StructDeclBits;
     EnumDeclBitfields EnumDeclBits;
     AssociatedTypeDeclBitfields AssociatedTypeDeclBits;
-    InfixOperatorDeclBitfields InfixOperatorDeclBits;
+    PrecedenceGroupDeclBitfields PrecedenceGroupDeclBits;
     ImportDeclBitfields ImportDeclBits;
     ExtensionDeclBitfields ExtensionDeclBits;
     uint32_t OpaqueBits;
@@ -812,6 +817,13 @@ public:
 
   /// Whether this declaration is weak-imported.
   bool isWeakImported(ModuleDecl *fromModule) const;
+
+  /// Returns true if the nature of this declaration allows overrides.
+  /// Note that this does not consider whether it is final or whether
+  /// the class it's on is final.
+  ///
+  /// If this returns true, the decl can be safely casted to ValueDecl.
+  bool isPotentiallyOverridable() const;
 
   // Make vanilla new/delete illegal for Decls.
   void *operator new(size_t Bytes) = delete;
@@ -2184,7 +2196,8 @@ public:
   Accessibility getFormalAccess(const DeclContext *useDC = nullptr) const {
     assert(hasAccessibility() && "accessibility not computed yet");
     Accessibility result = TypeAndAccess.getInt().getValue();
-    if (useDC && result == Accessibility::Internal)
+    if (useDC && (result == Accessibility::Internal ||
+                  result == Accessibility::Public))
       return getFormalAccessImpl(useDC);
     return result;
   }
@@ -3731,7 +3744,7 @@ enum class AccessStrategy : unsigned char {
 /// Information about a behavior instantiated by a storage declaration.
 ///
 /// TODO: Accessors, composed behaviors
-struct BehaviorRecord {
+struct alignas(1 << 3) BehaviorRecord {
   // The behavior name.
   TypeRepr *ProtocolName;
   // The parameter expression, if any.
@@ -3838,7 +3851,7 @@ private:
   struct GetSetRecord;
   
   /// This is stored immediately before the GetSetRecord.
-  struct AddressorRecord {
+  struct alignas(1 << 3) AddressorRecord {
     FuncDecl *Address = nullptr;        // User-defined address accessor
     FuncDecl *MutableAddress = nullptr; // User-defined mutableAddress accessor
 
@@ -3850,7 +3863,7 @@ private:
   void configureAddressorRecord(AddressorRecord *record,
                                FuncDecl *addressor, FuncDecl *mutableAddressor);
 
-  struct GetSetRecord {
+  struct alignas(1 << 3) GetSetRecord {
     SourceRange Braces;
     FuncDecl *Get = nullptr;       // User-defined getter
     FuncDecl *Set = nullptr;       // User-defined setter
@@ -4234,10 +4247,14 @@ protected:
     VarDeclBits.IsUserAccessible = true;
     VarDeclBits.IsStatic = IsStatic;
     VarDeclBits.IsLet = IsLet;
+    VarDeclBits.IsInOut = false;
     VarDeclBits.IsDebuggerVar = false;
     VarDeclBits.HasNonPatternBindingInit = false;
     setType(Ty);
   }
+
+  /// This is the type specified, including location information.
+  TypeLoc typeLoc;
 
 public:
   VarDecl(bool IsStatic, bool IsLet, SourceLoc NameLoc, Identifier Name,
@@ -4253,6 +4270,9 @@ public:
   bool isUserAccessible() const {
     return VarDeclBits.IsUserAccessible;
   }
+  
+  TypeLoc &getTypeLoc() { return typeLoc; }
+  TypeLoc getTypeLoc() const { return typeLoc; }
 
   /// Retrieve the source range of the variable type, or an invalid range if the
   /// variable's type is not explicitly written in the source.
@@ -4331,6 +4351,10 @@ public:
   bool isLet() const { return VarDeclBits.IsLet; }
   void setLet(bool IsLet) { VarDeclBits.IsLet = IsLet; }
 
+  /// Is this an 'inout' parameter?
+  bool isInOut() const { return VarDeclBits.IsInOut; }
+  void setInOut(bool InOut) { VarDeclBits.IsInOut = InOut; }
+
   /// Return true if this vardecl has an initial value bound to it in a way
   /// that isn't represented in the AST with an initializer in the pattern
   /// binding.  This happens in cases like "for i in ...", switch cases, etc.
@@ -4380,9 +4404,6 @@ class ParamDecl : public VarDecl {
   SourceLoc ArgumentNameLoc;
   SourceLoc LetVarInOutLoc;
 
-  /// This is the type specified, including location information.
-  TypeLoc typeLoc;
-  
   /// The default value, if any, along with whether this is varargs.
   llvm::PointerIntPair<ExprHandle *, 1, bool> DefaultValueAndIsVariadic;
   
@@ -4416,9 +4437,6 @@ public:
   SourceLoc getArgumentNameLoc() const { return ArgumentNameLoc; }
 
   SourceLoc getLetVarInOutLoc() const { return LetVarInOutLoc; }
-  
-  TypeLoc &getTypeLoc() { return typeLoc; }
-  TypeLoc getTypeLoc() const { return typeLoc; }
 
   bool isTypeLocImplicit() const { return IsTypeLocImplicit; }
   void setIsTypeLocImplicit(bool val) { IsTypeLocImplicit = val; }
@@ -4439,6 +4457,7 @@ public:
   ExprHandle *getDefaultValue() const {
     return DefaultValueAndIsVariadic.getPointer();
   }
+
   /// Whether or not this parameter is varargs.
   bool isVariadic() const { return DefaultValueAndIsVariadic.getInt(); }
   void setVariadic(bool value = true) {DefaultValueAndIsVariadic.setInt(value);}
@@ -5739,9 +5758,192 @@ public:
   }
 };
 
+/// Declares a precedence group.  For example:
+///
+/// \code
+/// precedencegroup MultiplicativePrecedence {
+///   associativity: right
+///   higherThan: AdditivePrecedence
+/// }
+/// \endcode
+class PrecedenceGroupDecl : public Decl {
+public:
+  struct Relation {
+    SourceLoc NameLoc;
+    Identifier Name;
+    PrecedenceGroupDecl *Group;
+  };
+
+private:
+  SourceLoc PrecedenceGroupLoc, NameLoc, LBraceLoc, RBraceLoc;
+  SourceLoc AssociativityKeywordLoc, AssociativityValueLoc;
+  SourceLoc AssignmentKeywordLoc, AssignmentValueLoc;
+  SourceLoc HigherThanLoc, LowerThanLoc;
+  Identifier Name;
+  unsigned NumHigherThan, NumLowerThan;
+  // Tail-allocated array of Relations
+
+  Relation *getHigherThanBuffer() {
+    return reinterpret_cast<Relation*>(this + 1);
+  }
+  const Relation *getHigherThanBuffer() const {
+    return reinterpret_cast<const Relation*>(this + 1);
+  }
+  Relation *getLowerThanBuffer() {
+    return getHigherThanBuffer() + NumHigherThan;
+  }
+  const Relation *getLowerThanBuffer() const {
+    return getHigherThanBuffer() + NumHigherThan;
+  }
+
+  PrecedenceGroupDecl(DeclContext *DC,
+                      SourceLoc precedenceGroupLoc,
+                      SourceLoc nameLoc, Identifier name,
+                      SourceLoc lbraceLoc,
+                      SourceLoc associativityKeywordLoc,
+                      SourceLoc associativityValueLoc,
+                      Associativity associativity,
+                      SourceLoc assignmentKeywordLoc,
+                      SourceLoc assignmentValueLoc,
+                      bool isAssignment,
+                      SourceLoc higherThanLoc, ArrayRef<Relation> higherThan,
+                      SourceLoc lowerThanLoc, ArrayRef<Relation> lowerThan,
+                      SourceLoc rbraceLoc);
+
+public:
+  static PrecedenceGroupDecl *create(DeclContext *dc,
+                                     SourceLoc precedenceGroupLoc,
+                                     SourceLoc nameLoc,
+                                     Identifier name,
+                                     SourceLoc lbraceLoc,
+                                     SourceLoc associativityKeywordLoc,
+                                     SourceLoc associativityValueLoc,
+                                     Associativity associativity,
+                                     SourceLoc assignmentKeywordLoc,
+                                     SourceLoc assignmentValueLoc,
+                                     bool isAssignment,
+                                     SourceLoc higherThanLoc,
+                                     ArrayRef<Relation> higherThan,
+                                     SourceLoc lowerThanLoc,
+                                     ArrayRef<Relation> lowerThan,
+                                     SourceLoc rbraceLoc);
+
+
+  SourceLoc getLoc() const { return NameLoc; }
+  SourceRange getSourceRange() const {
+    return { PrecedenceGroupLoc, RBraceLoc };
+  }
+
+  /// Return the location of 'precedencegroup' in:
+  ///   precedencegroup MultiplicativePrecedence { ... }
+  SourceLoc getPrecedenceGroupLoc() const { return PrecedenceGroupLoc; }
+
+  /// Return the location of 'MultiplicativePrecedence' in:
+  ///   precedencegroup MultiplicativePrecedence { ... }
+  SourceLoc getNameLoc() const {
+    return NameLoc;
+  }
+
+  Identifier getName() const {
+    return Name;
+  }
+
+  SourceLoc getLBraceLoc() const { return LBraceLoc; }
+  SourceLoc getRBraceLoc() const { return RBraceLoc; }
+
+  bool isAssociativityImplicit() const {
+    return AssociativityKeywordLoc.isInvalid();
+  }
+
+  /// Return the location of 'associativity' in:
+  ///   associativity: left
+  SourceLoc getAssociativityKeywordLoc() const {
+    return AssociativityKeywordLoc;
+  }
+
+  /// Return the location of 'right' in:
+  ///   associativity: right
+  SourceLoc getAssociativityValueLoc() const {
+    return AssociativityValueLoc;
+  }
+
+  Associativity getAssociativity() const {
+    return Associativity(PrecedenceGroupDeclBits.Associativity);
+  }
+  bool isLeftAssociative() const {
+    return getAssociativity() == Associativity::Left;
+  }
+  bool isRightAssociative() const {
+    return getAssociativity() == Associativity::Right;
+  }
+  bool isNonAssociative() const {
+    return getAssociativity() == Associativity::None;
+  }
+
+  bool isAssignmentImplicit() const {
+    return AssignmentKeywordLoc.isInvalid();
+  }
+
+  /// Return the location of 'assignment' in:
+  ///   assignment: true
+  SourceLoc getAssignmentKeywordLoc() const {
+    return AssignmentKeywordLoc;
+  }
+
+  /// Return the location of 'assignment' in:
+  ///   assignment: true
+  SourceLoc getAssignmentValueLoc() const {
+    return AssignmentValueLoc;
+  }
+
+  bool isAssignment() const {
+    return PrecedenceGroupDeclBits.IsAssignment;
+  }
+
+  bool isHigherThanImplicit() const {
+    return HigherThanLoc.isInvalid();
+  }
+
+  /// Return the location of 'higherThan' in:
+  ///   higherThan: AdditivePrecedence
+  SourceLoc getHigherThanLoc() const {
+    return HigherThanLoc;
+  }
+
+  ArrayRef<Relation> getHigherThan() const {
+    return { getHigherThanBuffer(), NumHigherThan };
+  }
+  MutableArrayRef<Relation> getMutableHigherThan() {
+    return { getHigherThanBuffer(), NumHigherThan };
+  }
+
+  bool isLowerThanImplicit() const {
+    return LowerThanLoc.isInvalid();
+  }
+
+  /// Return the location of 'lowerThan' in:
+  ///   lowerThan: MultiplicativePrecedence
+  SourceLoc getLowerThanLoc() const {
+    return LowerThanLoc;
+  }
+
+  ArrayRef<Relation> getLowerThan() const {
+    return { getLowerThanBuffer(), NumLowerThan };
+  }
+  MutableArrayRef<Relation> getMutableLowerThan() {
+    return { getLowerThanBuffer(), NumLowerThan };
+  }
+
+  void collectOperatorKeywordRanges(SmallVectorImpl<CharSourceRange> &Ranges);
+
+  static bool classof(const Decl *D) {
+    return D->getKind() == DeclKind::PrecedenceGroup;
+  }
+};
+
 /// Abstract base class of operator declarations.
 class OperatorDecl : public Decl {
-  SourceLoc OperatorLoc, NameLoc, LBraceLoc, RBraceLoc;
+  SourceLoc OperatorLoc, NameLoc;
   
   Identifier name;
 
@@ -5750,126 +5952,68 @@ public:
                DeclContext *DC,
                SourceLoc OperatorLoc,
                Identifier Name,
-               SourceLoc NameLoc,
-               SourceLoc LBraceLoc,
-               SourceLoc RBraceLoc)
+               SourceLoc NameLoc)
     : Decl(kind, DC),
       OperatorLoc(OperatorLoc), NameLoc(NameLoc),
-      LBraceLoc(LBraceLoc), RBraceLoc(RBraceLoc),
       name(Name) {}
   
   SourceLoc getLoc() const { return NameLoc; }
-  SourceRange getSourceRange() const { return {OperatorLoc, RBraceLoc}; }
 
   SourceLoc getOperatorLoc() const { return OperatorLoc; }
-  SourceLoc getLBraceLoc() const { return LBraceLoc; }
-  SourceLoc getRBraceLoc() const { return RBraceLoc; }
+  SourceLoc getNameLoc() const { return NameLoc; }
   Identifier getName() const { return name; }
   
   static bool classof(const Decl *D) {
     return D->getKind() >= DeclKind::First_OperatorDecl
-      && D->getKind() <= DeclKind::Last_OperatorDecl;
+        && D->getKind() <= DeclKind::Last_OperatorDecl;
   }
 };
 
 /// Declares the behavior of an infix operator. For example:
 ///
 /// \code
-/// infix operator /+/ {
-///   associativity left
-///   precedence 123
-/// }
+/// infix operator /+/ : AdditivePrecedence
 /// \endcode
 class InfixOperatorDecl : public OperatorDecl {
-  SourceLoc AssociativityLoc, AssociativityValueLoc,
-    PrecedenceLoc, PrecedenceValueLoc,
-    AssignmentLoc;
+  SourceLoc ColonLoc, PrecedenceGroupNameLoc;
+  Identifier PrecedenceGroupName;
+  PrecedenceGroupDecl *PrecedenceGroup = nullptr;
 
 public:
   InfixOperatorDecl(DeclContext *DC,
-                    SourceLoc OperatorLoc,
-                    Identifier Name,
-                    SourceLoc NameLoc,
-                    SourceLoc LBraceLoc,
-                    bool IsAssocImplicit,
-                    SourceLoc AssociativityLoc,
-                    SourceLoc AssociativityValueLoc,
-                    bool IsPrecedenceImplicit,
-                    SourceLoc PrecedenceLoc,
-                    SourceLoc PrecedenceValueLoc,
-                    bool IsAssignmentImplicit,
-                    SourceLoc AssignmentLoc,
-                    SourceLoc RBraceLoc,
-                    InfixData InfixData)
-    : OperatorDecl(DeclKind::InfixOperator, DC,
-                   OperatorLoc,
-                   Name,
-                   NameLoc,
-                   LBraceLoc,
-                   RBraceLoc),
-      AssociativityLoc(AssociativityLoc),
-      AssociativityValueLoc(AssociativityValueLoc),
-      PrecedenceLoc(PrecedenceLoc),
-      PrecedenceValueLoc(PrecedenceValueLoc),
-      AssignmentLoc(AssignmentLoc) {
-    if (!InfixData.isValid()) {
-      setInvalid();
-    } else {
-      assert((AssociativityLoc.isInvalid() || !IsAssocImplicit) &&
-             "Associativity cannot be implicit if it came from user source");
-      assert((PrecedenceLoc.isInvalid() || !IsPrecedenceImplicit) &&
-             "Precedence cannot be implicit if it came from user source");
-      InfixOperatorDeclBits.Precedence = InfixData.getPrecedence();
-      InfixOperatorDeclBits.Associativity =
-        static_cast<unsigned>(InfixData.getAssociativity());
-      InfixOperatorDeclBits.Assignment =
-         unsigned(InfixData.isAssignment());
-      InfixOperatorDeclBits.IsPrecedenceImplicit = IsPrecedenceImplicit;
-      InfixOperatorDeclBits.IsAssocImplicit = IsAssocImplicit;
-      InfixOperatorDeclBits.IsAssignmentImplicit = IsAssignmentImplicit;
-    }
+                    SourceLoc operatorLoc,
+                    Identifier name,
+                    SourceLoc nameLoc,
+                    SourceLoc colonLoc,
+                    Identifier precedenceGroupName,
+                    SourceLoc precedenceGroupNameLoc)
+    : OperatorDecl(DeclKind::InfixOperator, DC, operatorLoc, name, nameLoc),
+      ColonLoc(colonLoc), PrecedenceGroupNameLoc(precedenceGroupNameLoc),
+      PrecedenceGroupName(precedenceGroupName) {
+  }
+
+  SourceLoc getEndLoc() const {
+    if (PrecedenceGroupName.empty())
+      return getNameLoc();
+    return PrecedenceGroupNameLoc;
+  }
+  SourceRange getSourceRange() const {
+    return { getOperatorLoc(), getEndLoc() };
   }
   
-  SourceLoc getAssociativityLoc() const { return AssociativityLoc; }
-  SourceLoc getAssociativityValueLoc() const { return AssociativityValueLoc; }
-  SourceLoc getPrecedenceLoc() const { return PrecedenceLoc; }
-  SourceLoc getPrecedenceValueLoc() const { return PrecedenceValueLoc; }
-  SourceLoc getAssignmentLoc() const { return AssignmentLoc; }
+  SourceLoc getColonLoc() const { return ColonLoc; }
+  SourceLoc getPrecedenceGroupNameLoc() const { return PrecedenceGroupNameLoc; }
 
-  unsigned getPrecedence() const {
-    return InfixOperatorDeclBits.Precedence;
+  Identifier getPrecedenceGroupName() const { return PrecedenceGroupName; }
+  PrecedenceGroupDecl *getPrecedenceGroup() const { return PrecedenceGroup; }
+  void setPrecedenceGroup(PrecedenceGroupDecl *PGD) {
+    PrecedenceGroup = PGD;
   }
-
-  Associativity getAssociativity() const {
-    return Associativity(InfixOperatorDeclBits.Associativity);
-  }
-  
-  bool isAssignment() const {
-    return InfixOperatorDeclBits.Assignment;
-  }
-
-  InfixData getInfixData() const {
-    if (isInvalid())
-      return InfixData();
-    return InfixData(getPrecedence(), getAssociativity(), isAssignment());
-  }
-
-  bool isAssociativityImplicit() const {
-    return InfixOperatorDeclBits.IsAssocImplicit;
-  }
-  bool isPrecedenceImplicit() const {
-    return InfixOperatorDeclBits.IsPrecedenceImplicit;
-  }
-  bool isAssignmentImplicit() const {
-    return InfixOperatorDeclBits.IsAssignmentImplicit;
-  }
-
-  void collectOperatorKeywordRanges(SmallVectorImpl<CharSourceRange> &Ranges);
 
   /// True if this decl's attributes conflict with those declared by another
   /// operator.
   bool conflictsWith(InfixOperatorDecl *other) {
-    return getInfixData() != other->getInfixData();
+    return getPrecedenceGroup() != other->getPrecedenceGroup();
   }
   
   static bool classof(const Decl *D) {
@@ -5885,10 +6029,12 @@ public:
 class PrefixOperatorDecl : public OperatorDecl {
 public:
   PrefixOperatorDecl(DeclContext *DC, SourceLoc OperatorLoc, Identifier Name,
-                     SourceLoc NameLoc, SourceLoc LBraceLoc,
-                     SourceLoc RBraceLoc)
-    : OperatorDecl(DeclKind::PrefixOperator, DC,
-                   OperatorLoc, Name, NameLoc, LBraceLoc, RBraceLoc) {}
+                     SourceLoc NameLoc)
+    : OperatorDecl(DeclKind::PrefixOperator, DC, OperatorLoc, Name, NameLoc) {}
+
+  SourceRange getSourceRange() const {
+    return { getOperatorLoc(), getNameLoc() };
+  }
 
   /// True if this decl's attributes conflict with those declared by another
   /// PrefixOperatorDecl.
@@ -5909,11 +6055,13 @@ public:
 class PostfixOperatorDecl : public OperatorDecl {
 public:
   PostfixOperatorDecl(DeclContext *DC, SourceLoc OperatorLoc, Identifier Name,
-                     SourceLoc NameLoc, SourceLoc LBraceLoc,
-                     SourceLoc RBraceLoc)
-    : OperatorDecl(DeclKind::PostfixOperator, DC, OperatorLoc, Name,
-                   NameLoc, LBraceLoc, RBraceLoc) {}
+                     SourceLoc NameLoc)
+    : OperatorDecl(DeclKind::PostfixOperator, DC, OperatorLoc, Name, NameLoc) {}
   
+  SourceRange getSourceRange() const {
+    return { getOperatorLoc(), getNameLoc() };
+  }
+
   /// True if this decl's attributes conflict with those declared by another
   /// PostfixOperatorDecl.
   bool conflictsWith(PostfixOperatorDecl *other) {
@@ -6007,6 +6155,16 @@ inline ArrayRef<Requirement> ExtensionDecl::getGenericRequirements() const {
     return { };
 
   return GenericSig->getRequirements();
+}
+
+inline bool Decl::isPotentiallyOverridable() const {
+  if (isa<VarDecl>(this) ||
+      isa<SubscriptDecl>(this) ||
+      isa<FuncDecl>(this)) {
+    return getDeclContext()->getAsClassOrClassExtensionContext();
+  } else {
+    return false;
+  }
 }
 
 } // end namespace swift

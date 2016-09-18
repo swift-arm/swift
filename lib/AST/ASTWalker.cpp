@@ -187,6 +187,10 @@ class Traversal : public ASTVisitor<Traversal, Expr*, Stmt*,
     return false;
   }
 
+  bool visitPrecedenceGroupDecl(PrecedenceGroupDecl *PGD) {
+    return false;
+  }
+
   bool visitTypeAliasDecl(TypeAliasDecl *TAD) {
     if (doIt(TAD->getUnderlyingTypeLoc()))
       return true;
@@ -355,14 +359,6 @@ class Traversal : public ASTVisitor<Traversal, Expr*, Stmt*,
   }
   
   Expr *visitOverloadedDeclRefExpr(OverloadedDeclRefExpr *E) { return E; }
-  Expr *visitOverloadedMemberRefExpr(OverloadedMemberRefExpr *E) {
-    if (auto base = doIt(E->getBase())) {
-      E->setBase(base);
-      return E;
-    }
-
-    return nullptr;
-  }
   Expr *visitUnresolvedDeclRefExpr(UnresolvedDeclRefExpr *E) { return E; }
 
   Expr *visitUnresolvedMemberExpr(UnresolvedMemberExpr *E) { 
@@ -804,14 +800,6 @@ class Traversal : public ASTVisitor<Traversal, Expr*, Stmt*,
     return E;
   }
 
-  Expr *visitDefaultValueExpr(DefaultValueExpr *E) {
-    Expr *sub = doIt(E->getSubExpr());
-    if (!sub) return nullptr;
-
-    E->setSubExpr(sub);
-    return E;
-  }
-  
   Expr *visitUnresolvedPatternExpr(UnresolvedPatternExpr *E) {
     Pattern *sub = doIt(E->getSubPattern());
     if (!sub) return nullptr;
@@ -1414,16 +1402,6 @@ Pattern *Traversal::visitIsPattern(IsPattern *P) {
   if (!P->isImplicit())
     if (doIt(P->getCastTypeLoc()))
       return nullptr;
-  return P;
-}
-
-Pattern *Traversal::visitNominalTypePattern(NominalTypePattern *P) {
-  for (auto &elt : P->getMutableElements()) {
-    if (Pattern *newSub = doIt(elt.getSubPattern()))
-      elt.setSubPattern(newSub);
-    else
-      return nullptr;
-  }
   return P;
 }
 

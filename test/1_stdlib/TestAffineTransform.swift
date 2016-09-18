@@ -61,7 +61,10 @@ class TestAffineTransform : TestAffineTransformSuper {
     }
     
     func test_BasicConstruction() {
+        let defaultAffineTransform = AffineTransform()
         let identityTransform = AffineTransform.identity
+
+        expectEqual(defaultAffineTransform, identityTransform)
         
         // The diagonal entries (1,1) and (2,2) of the identity matrix are ones. The other entries are zeros.
         // TODO: These should use DBL_MAX but it's not available as part of Glibc on Linux
@@ -324,10 +327,42 @@ class TestAffineTransform : TestAffineTransformSuper {
             AffineTransform(m11: 0.498, m12: -0.284, m21: -0.742, m22: 0.3248, tX: 12, tY: 44)
         ]
         for val in values {
-            let ref = NSAffineTransform()
-            ref.transformStruct = val
+            let ref = val as NSAffineTransform
             expectEqual(ref.hashValue, val.hashValue)
         }
+    }
+
+    func test_AnyHashableContainingAffineTransform() {
+        let values: [AffineTransform] = [
+            AffineTransform.identity,
+            AffineTransform(m11: -55.66, m12: 22.7, m21: 1.5, m22: 0.0, tX: -22, tY: -33),
+            AffineTransform(m11: -55.66, m12: 22.7, m21: 1.5, m22: 0.0, tX: -22, tY: -33)
+        ]
+        let anyHashables = values.map(AnyHashable.init)
+        expectEqual(AffineTransform.self, type(of: anyHashables[0].base))
+        expectEqual(AffineTransform.self, type(of: anyHashables[1].base))
+        expectEqual(AffineTransform.self, type(of: anyHashables[2].base))
+        expectNotEqual(anyHashables[0], anyHashables[1])
+        expectEqual(anyHashables[1], anyHashables[2])
+    }
+
+    func test_AnyHashableCreatedFromNSAffineTransform() {
+        func makeNSAffineTransform(rotatedByDegrees angle: CGFloat) -> NSAffineTransform {
+            let result = NSAffineTransform()
+            result.rotate(byDegrees: angle)
+            return result
+        }
+        let values: [NSAffineTransform] = [
+            makeNSAffineTransform(rotatedByDegrees: 0),
+            makeNSAffineTransform(rotatedByDegrees: 10),
+            makeNSAffineTransform(rotatedByDegrees: 10),
+        ]
+        let anyHashables = values.map(AnyHashable.init)
+        expectEqual(AffineTransform.self, type(of: anyHashables[0].base))
+        expectEqual(AffineTransform.self, type(of: anyHashables[1].base))
+        expectEqual(AffineTransform.self, type(of: anyHashables[2].base))
+        expectNotEqual(anyHashables[0], anyHashables[1])
+        expectEqual(anyHashables[1], anyHashables[2])
     }
 }
 
@@ -349,6 +384,8 @@ AffineTransformTests.test("test_PrependTransform") { TestAffineTransform().test_
 AffineTransformTests.test("test_TransformComposition") { TestAffineTransform().test_TransformComposition() }
 AffineTransformTests.test("test_hashing_identity") { TestAffineTransform().test_hashing_identity() }
 AffineTransformTests.test("test_hashing_values") { TestAffineTransform().test_hashing_values() }
+AffineTransformTests.test("test_AnyHashableContainingAffineTransform") { TestAffineTransform().test_AnyHashableContainingAffineTransform() }
+AffineTransformTests.test("test_AnyHashableCreatedFromNSAffineTransform") { TestAffineTransform().test_AnyHashableCreatedFromNSAffineTransform() }
 runAllTests()
 #endif
     

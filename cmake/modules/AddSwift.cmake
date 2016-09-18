@@ -1437,6 +1437,13 @@ function(add_swift_library name)
             "${UNIVERSAL_LIBRARY_NAME}"
             ${THIN_INPUT_TARGETS})
 
+        if("${CMAKE_SYSTEM_NAME}" STREQUAL "Darwin" AND SWIFTLIB_SHARED)
+          # Ad-hoc sign stdlib dylibs
+          add_custom_command(TARGET "${name}-${SWIFT_SDK_${sdk}_LIB_SUBDIR}"
+                             POST_BUILD
+                             COMMAND "codesign" "-f" "-s" "-" "${UNIVERSAL_LIBRARY_NAME}")
+        endif()
+
         # Cache universal libraries for dependency purposes
         set(UNIVERSAL_LIBRARY_NAMES_${SWIFT_SDK_${sdk}_LIB_SUBDIR}
           ${UNIVERSAL_LIBRARY_NAMES_${SWIFT_SDK_${sdk}_LIB_SUBDIR}}
@@ -1506,7 +1513,8 @@ function(add_swift_library name)
               add_dependencies("swift-stdlib${VARIANT_SUFFIX}"
                   ${lipo_target}
                   ${lipo_target_static})
-              if(NOT "${name}" STREQUAL "swiftStdlibCollectionUnittest")
+              if((NOT "${name}" STREQUAL "swiftStdlibCollectionUnittest") AND
+                 (NOT "${name}" STREQUAL "swiftStdlibUnicodeUnittest"))
                 add_dependencies("swift-test-stdlib${VARIANT_SUFFIX}"
                     ${lipo_target}
                     ${lipo_target_static})

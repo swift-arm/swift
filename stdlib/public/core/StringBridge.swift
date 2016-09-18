@@ -40,7 +40,7 @@ public // @testable
 func _stdlib_binary_CFStringGetCharactersPtr(
   _ source: _CocoaString
 ) -> UnsafeMutablePointer<UTF16.CodeUnit>? {
-  return UnsafeMutablePointer(_swift_stdlib_CFStringGetCharactersPtr(source))
+  return UnsafeMutablePointer(mutating: _swift_stdlib_CFStringGetCharactersPtr(source))
 }
 
 /// Bridges `source` to `Swift.String`, assuming that `source` has non-ASCII
@@ -54,7 +54,7 @@ func _cocoaStringToSwiftString_NonASCII(
   let start = _stdlib_binary_CFStringGetCharactersPtr(cfImmutableValue)
 
   return String(_StringCore(
-    baseAddress: OpaquePointer(start),
+    baseAddress: start,
     count: length,
     elementShift: 1,
     hasCocoaBuffer: true,
@@ -81,7 +81,7 @@ internal func _cocoaStringToContiguous(
 
   _swift_stdlib_CFStringGetCharacters(
     source, _swift_shims_CFRange(location: startIndex, length: count), 
-    UnsafeMutablePointer<_swift_shims_UniChar>(buffer.start))
+    buffer.start.assumingMemoryBound(to: _swift_shims_UniChar.self))
   
   return buffer
 }
@@ -163,13 +163,13 @@ extension String {
 
     // start will hold the base pointer of contiguous storage, if it
     // is found.
-    var start: OpaquePointer?
+    var start: UnsafeMutableRawPointer?
     let isUTF16 = (nulTerminatedASCII == nil)
     if isUTF16 {
       let utf16Buf = _swift_stdlib_CFStringGetCharactersPtr(cfImmutableValue)
-      start = OpaquePointer(utf16Buf)
+      start = UnsafeMutableRawPointer(mutating: utf16Buf)
     } else {
-      start = OpaquePointer(nulTerminatedASCII)
+      start = UnsafeMutableRawPointer(mutating: nulTerminatedASCII)
     }
 
     self._core = _StringCore(
@@ -279,7 +279,7 @@ public final class _NSContiguousString : _SwiftNativeNSString {
   /// will result in undefined behavior.
   @_semantics("self_no_escaping_closure")
   func _unsafeWithNotEscapedSelfPointer<Result>(
-    _ body: @noescape (OpaquePointer) throws -> Result
+    _ body: (OpaquePointer) throws -> Result
   ) rethrows -> Result {
     let selfAsPointer = unsafeBitCast(self, to: OpaquePointer.self)
     defer {
@@ -295,7 +295,7 @@ public final class _NSContiguousString : _SwiftNativeNSString {
   @_semantics("pair_no_escaping_closure")
   func _unsafeWithNotEscapedSelfPointerPair<Result>(
     _ rhs: _NSContiguousString,
-    _ body: @noescape (OpaquePointer, OpaquePointer) throws -> Result
+    _ body: (OpaquePointer, OpaquePointer) throws -> Result
   ) rethrows -> Result {
     let selfAsPointer = unsafeBitCast(self, to: OpaquePointer.self)
     let rhsAsPointer = unsafeBitCast(rhs, to: OpaquePointer.self)

@@ -1,21 +1,21 @@
 // RUN: sed -n -e '1,/NO_ERRORS_UP_TO_HERE$/ p' %s > %t_no_errors.swift
 // RUN: %target-swift-frontend -parse -verify -disable-objc-attr-requires-foundation-module %t_no_errors.swift
 //
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=TEST_PRIVATE_ABC -code-completion-keywords=false | FileCheck %s -check-prefix=TEST_PRIVATE_ABC
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=TEST_INTERNAL_ABC -code-completion-keywords=false | FileCheck %s -check-prefix=TEST_INTERNAL_ABC
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=TEST_PUBLIC_ABC -code-completion-keywords=false | FileCheck %s -check-prefix=TEST_PUBLIC_ABC
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=TEST_PRIVATE_ABC -code-completion-keywords=false | %FileCheck %s -check-prefix=TEST_PRIVATE_ABC
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=TEST_INTERNAL_ABC -code-completion-keywords=false | %FileCheck %s -check-prefix=TEST_INTERNAL_ABC
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=TEST_PUBLIC_ABC -code-completion-keywords=false | %FileCheck %s -check-prefix=TEST_PUBLIC_ABC
 //
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=TEST_PRIVATE_DE -code-completion-keywords=false | FileCheck %s -check-prefix=TEST_PRIVATE_DE
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=TEST_INTERNAL_DE -code-completion-keywords=false | FileCheck %s -check-prefix=TEST_INTERNAL_DE
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=TEST_PUBLIC_DE -code-completion-keywords=false | FileCheck %s -check-prefix=TEST_PUBLIC_DE
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=TEST_PRIVATE_DE -code-completion-keywords=false | %FileCheck %s -check-prefix=TEST_PRIVATE_DE
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=TEST_INTERNAL_DE -code-completion-keywords=false | %FileCheck %s -check-prefix=TEST_INTERNAL_DE
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=TEST_PUBLIC_DE -code-completion-keywords=false | %FileCheck %s -check-prefix=TEST_PUBLIC_DE
 //
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=TEST_PRIVATE_ED -code-completion-keywords=false | FileCheck %s -check-prefix=TEST_PRIVATE_ED
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=TEST_INTERNAL_ED -code-completion-keywords=false | FileCheck %s -check-prefix=TEST_INTERNAL_ED
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=TEST_PUBLIC_ED -code-completion-keywords=false | FileCheck %s -check-prefix=TEST_PUBLIC_ED
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=TEST_PRIVATE_ED -code-completion-keywords=false | %FileCheck %s -check-prefix=TEST_PRIVATE_ED
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=TEST_INTERNAL_ED -code-completion-keywords=false | %FileCheck %s -check-prefix=TEST_INTERNAL_ED
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=TEST_PUBLIC_ED -code-completion-keywords=false | %FileCheck %s -check-prefix=TEST_PUBLIC_ED
 //
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=TEST_PRIVATE_EF -code-completion-keywords=false | FileCheck %s -check-prefix=TEST_PRIVATE_EF
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=TEST_INTERNAL_EF -code-completion-keywords=false | FileCheck %s -check-prefix=TEST_INTERNAL_EF
-// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=TEST_PUBLIC_EF -code-completion-keywords=false | FileCheck %s -check-prefix=TEST_PUBLIC_EF
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=TEST_PRIVATE_EF -code-completion-keywords=false | %FileCheck %s -check-prefix=TEST_PRIVATE_EF
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=TEST_INTERNAL_EF -code-completion-keywords=false | %FileCheck %s -check-prefix=TEST_INTERNAL_EF
+// RUN: %target-swift-ide-test -code-completion -source-filename %s -code-completion-token=TEST_PUBLIC_EF -code-completion-keywords=false | %FileCheck %s -check-prefix=TEST_PUBLIC_EF
 
 @objc
 private class TagPA {}
@@ -112,16 +112,16 @@ public class TestPublicABC : ProtocolAPrivate, ProtocolBInternal, ProtocolCPubli
 
 // TEST_INTERNAL_ABC: Begin completions, 15 items
 // TEST_INTERNAL_ABC-DAG: Decl[Constructor]/Super:    init(fromProtocolA: TagPA) {|}{{; name=.+$}}
-// TEST_INTERNAL_ABC-DAG: Decl[InstanceMethod]/Super: private func protoAFunc(x: TagPA) {|}{{; name=.+$}}
-// TEST_INTERNAL_ABC-DAG: Decl[InstanceMethod]/Super: private func protoAFuncOptional(x: TagPA) {|}{{; name=.+$}}
+// TEST_INTERNAL_ABC-DAG: Decl[InstanceMethod]/Super: func protoAFunc(x: TagPA) {|}{{; name=.+$}}
+// TEST_INTERNAL_ABC-DAG: Decl[InstanceMethod]/Super: func protoAFuncOptional(x: TagPA) {|}{{; name=.+$}}
 // TEST_INTERNAL_ABC-DAG: Decl[Constructor]/Super:    init(fromProtocolB: TagPB) {|}{{; name=.+$}}
 // TEST_INTERNAL_ABC-DAG: Decl[InstanceMethod]/Super: func protoBFunc(x: TagPB) {|}{{; name=.+$}}
 // TEST_INTERNAL_ABC-DAG: Decl[InstanceMethod]/Super: func protoBFuncOptional(x: TagPB) {|}{{; name=.+$}}
 // TEST_INTERNAL_ABC-DAG: Decl[Constructor]/Super:    init(fromProtocolC: TagPC) {|}{{; name=.+$}}
 // TEST_INTERNAL_ABC-DAG: Decl[InstanceMethod]/Super: func protoCFunc(x: TagPC) {|}{{; name=.+$}}
 // TEST_INTERNAL_ABC-DAG: Decl[InstanceMethod]/Super: func protoCFuncOptional(x: TagPC) {|}{{; name=.+$}}
-// TEST_INTERNAL_ABC-DAG: Decl[InstanceVar]/Super:    private var protoAVarRW: TagPA
-// TEST_INTERNAL_ABC-DAG: Decl[InstanceVar]/Super:    private var protoAVarRO: TagPA
+// TEST_INTERNAL_ABC-DAG: Decl[InstanceVar]/Super:    var protoAVarRW: TagPA
+// TEST_INTERNAL_ABC-DAG: Decl[InstanceVar]/Super:    var protoAVarRO: TagPA
 // TEST_INTERNAL_ABC-DAG: Decl[InstanceVar]/Super:    var protoBVarRW: TagPB
 // TEST_INTERNAL_ABC-DAG: Decl[InstanceVar]/Super:    var protoBVarRO: TagPB
 // TEST_INTERNAL_ABC-DAG: Decl[InstanceVar]/Super:    var protoCVarRW: TagPC
@@ -130,16 +130,16 @@ public class TestPublicABC : ProtocolAPrivate, ProtocolBInternal, ProtocolCPubli
 
 // TEST_PUBLIC_ABC: Begin completions, 15 items
 // TEST_PUBLIC_ABC-DAG: Decl[Constructor]/Super:    init(fromProtocolA: TagPA) {|}{{; name=.+$}}
-// TEST_PUBLIC_ABC-DAG: Decl[InstanceMethod]/Super: private func protoAFunc(x: TagPA) {|}{{; name=.+$}}
-// TEST_PUBLIC_ABC-DAG: Decl[InstanceMethod]/Super: private func protoAFuncOptional(x: TagPA) {|}{{; name=.+$}}
+// TEST_PUBLIC_ABC-DAG: Decl[InstanceMethod]/Super: func protoAFunc(x: TagPA) {|}{{; name=.+$}}
+// TEST_PUBLIC_ABC-DAG: Decl[InstanceMethod]/Super: func protoAFuncOptional(x: TagPA) {|}{{; name=.+$}}
 // TEST_PUBLIC_ABC-DAG: Decl[Constructor]/Super:    init(fromProtocolB: TagPB) {|}{{; name=.+$}}
 // TEST_PUBLIC_ABC-DAG: Decl[InstanceMethod]/Super: func protoBFunc(x: TagPB) {|}{{; name=.+$}}
 // TEST_PUBLIC_ABC-DAG: Decl[InstanceMethod]/Super: func protoBFuncOptional(x: TagPB) {|}{{; name=.+$}}
 // TEST_PUBLIC_ABC-DAG: Decl[Constructor]/Super:    init(fromProtocolC: TagPC) {|}{{; name=.+$}}
 // TEST_PUBLIC_ABC-DAG: Decl[InstanceMethod]/Super: public func protoCFunc(x: TagPC) {|}{{; name=.+$}}
 // TEST_PUBLIC_ABC-DAG: Decl[InstanceMethod]/Super: public func protoCFuncOptional(x: TagPC) {|}{{; name=.+$}}
-// TEST_PUBLIC_ABC-DAG: Decl[InstanceVar]/Super:    private var protoAVarRW: TagPA
-// TEST_PUBLIC_ABC-DAG: Decl[InstanceVar]/Super:    private var protoAVarRO: TagPA
+// TEST_PUBLIC_ABC-DAG: Decl[InstanceVar]/Super:    var protoAVarRW: TagPA
+// TEST_PUBLIC_ABC-DAG: Decl[InstanceVar]/Super:    var protoAVarRO: TagPA
 // TEST_PUBLIC_ABC-DAG: Decl[InstanceVar]/Super:    var protoBVarRW: TagPB
 // TEST_PUBLIC_ABC-DAG: Decl[InstanceVar]/Super:    var protoBVarRO: TagPB
 // TEST_PUBLIC_ABC-DAG: Decl[InstanceVar]/Super:    public var protoCVarRW: TagPC

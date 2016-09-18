@@ -102,6 +102,7 @@ DescriptiveDeclKind Decl::getDescriptiveKind() const {
   TRIVIAL_KIND(TopLevelCode);
   TRIVIAL_KIND(IfConfig);
   TRIVIAL_KIND(PatternBinding);
+  TRIVIAL_KIND(PrecedenceGroup);
   TRIVIAL_KIND(InfixOperator);
   TRIVIAL_KIND(PrefixOperator);
   TRIVIAL_KIND(PostfixOperator);
@@ -217,6 +218,7 @@ StringRef Decl::getDescriptiveKindName(DescriptiveDeclKind K) {
   ENTRY(StaticLet, "static let");
   ENTRY(ClassVar, "class var");
   ENTRY(ClassLet, "class let");
+  ENTRY(PrecedenceGroup, "precedence group");
   ENTRY(InfixOperator, "infix operator");
   ENTRY(PrefixOperator, "prefix operator");
   ENTRY(PostfixOperator, "postfix operator");
@@ -657,6 +659,7 @@ ImportKind ImportDecl::getBestImportKind(const ValueDecl *VD) {
   case DeclKind::PostfixOperator:
   case DeclKind::EnumCase:
   case DeclKind::IfConfig:
+  case DeclKind::PrecedenceGroup:
     llvm_unreachable("not a ValueDecl");
 
   case DeclKind::AssociatedType:
@@ -1224,7 +1227,7 @@ bool AbstractStorageDecl::hasFixedLayout() const {
 
   // Private and (unversioned) internal variables always have a
   // fixed layout.
-  if (getEffectiveAccess() != Accessibility::Public)
+  if (getEffectiveAccess() < Accessibility::Public)
     return true;
 
   // Check for an explicit @_fixed_layout attribute.
@@ -1266,6 +1269,7 @@ bool ValueDecl::isDefinition() const {
   case DeclKind::PrefixOperator:
   case DeclKind::PostfixOperator:
   case DeclKind::IfConfig:
+  case DeclKind::PrecedenceGroup:
     llvm_unreachable("non-value decls shouldn't get here");
 
   case DeclKind::Func:
@@ -1304,6 +1308,7 @@ bool ValueDecl::isInstanceMember() const {
   case DeclKind::PrefixOperator:
   case DeclKind::PostfixOperator:
   case DeclKind::IfConfig:
+  case DeclKind::PrecedenceGroup:
     llvm_unreachable("Not a ValueDecl");
 
   case DeclKind::Class:
@@ -1789,12 +1794,9 @@ SourceLoc ValueDecl::getAttributeInsertionLoc(bool forModifier) const {
   return resultLoc.isValid() ? resultLoc : getStartLoc();
 }
 
-/// Returns true if \p VD needs to be treated as publicly-accessible at the SIL,
-/// LLVM, and machine levels.
-///
-/// The most common causes of this are -enable-testing and versioned non-public
-/// declarations.
-static bool isInternalDeclEffectivelyPublic(const ValueDecl *VD) {
+/// Returns true if \p VD needs to be treated as publicly-accessible
+/// at the SIL, LLVM, and machine levels due to being versioned.
+static bool isVersionedInternalDecl(const ValueDecl *VD) {
   assert(VD->getFormalAccess() == Accessibility::Internal);
 
   if (VD->getAttrs().hasAttribute<VersionedAttr>())
@@ -1805,10 +1807,26 @@ static bool isInternalDeclEffectivelyPublic(const ValueDecl *VD) {
       if (ASD->getAttrs().hasAttribute<VersionedAttr>())
         return true;
 
-  if (VD->getModuleContext()->isTestingEnabled())
-    return true;
-
   return false;
+}
+
+/// Return the accessibility of an internal or public declaration
+/// that's been testably imported.
+static Accessibility getTestableAccess(const ValueDecl *decl) {
+  // Non-final classes are considered open to @testable importers.
+  if (auto cls = dyn_cast<ClassDecl>(decl)) {
+    if (!cls->isFinal())
+      return Accessibility::Open;
+
+  // Non-final overridable class members are considered open to
+  // @testable importers.
+  } else if (decl->isPotentiallyOverridable()) {
+    if (!cast<ValueDecl>(decl)->isFinal())
+      return Accessibility::Open;
+  }
+
+  // Everything else is considered public.
+  return Accessibility::Public;
 }
 
 Accessibility ValueDecl::getEffectiveAccess() const {
@@ -1817,9 +1835,15 @@ Accessibility ValueDecl::getEffectiveAccess() const {
   // Handle @testable.
   switch (effectiveAccess) {
   case Accessibility::Public:
+    if (getModuleContext()->isTestingEnabled())
+      effectiveAccess = getTestableAccess(this);
+    break;
+  case Accessibility::Open:
     break;
   case Accessibility::Internal:
-    if (isInternalDeclEffectivelyPublic(this))
+    if (getModuleContext()->isTestingEnabled())
+      effectiveAccess = getTestableAccess(this);
+    else if (isVersionedInternalDecl(this))
       effectiveAccess = Accessibility::Public;
     break;
   case Accessibility::FilePrivate:
@@ -1851,23 +1875,31 @@ Accessibility ValueDecl::getEffectiveAccess() const {
 }
 
 Accessibility ValueDecl::getFormalAccessImpl(const DeclContext *useDC) const {
-  assert(getFormalAccess() == Accessibility::Internal &&
+  assert((getFormalAccess() == Accessibility::Internal ||
+          getFormalAccess() == Accessibility::Public) &&
          "should be able to fast-path non-internal cases");
   assert(useDC && "should fast-path non-scoped cases");
   if (auto *useSF = dyn_cast<SourceFile>(useDC->getModuleScopeContext()))
     if (useSF->hasTestableImport(getModuleContext()))
-      return Accessibility::Public;
-  return Accessibility::Internal;
+      return getTestableAccess(this);
+  return getFormalAccess();
 }
 
 const DeclContext *
 ValueDecl::getFormalAccessScope(const DeclContext *useDC) const {
   const DeclContext *result = getDeclContext();
   Accessibility access = getFormalAccess(useDC);
+  bool swift3PrivateChecked = false;
 
   while (!result->isModuleScopeContext()) {
     if (result->isLocalContext())
       return result;
+
+    if (access == Accessibility::Private && !swift3PrivateChecked) {
+      if (result->getASTContext().LangOpts.EnableSwift3Private)
+        return result;
+      swift3PrivateChecked = true;
+    }
 
     if (auto enclosingNominal = dyn_cast<NominalTypeDecl>(result)) {
       access = std::min(access, enclosingNominal->getFormalAccess(useDC));
@@ -1890,13 +1922,13 @@ ValueDecl::getFormalAccessScope(const DeclContext *useDC) const {
 
   switch (access) {
   case Accessibility::Private:
-    // TODO: Implement 'private'
   case Accessibility::FilePrivate:
     assert(result->isModuleScopeContext());
     return result;
   case Accessibility::Internal:
     return result->getParentModule();
   case Accessibility::Public:
+  case Accessibility::Open:
     return nullptr;
   }
 
@@ -1936,7 +1968,7 @@ Type TypeDecl::getDeclaredInterfaceType() const {
 bool NominalTypeDecl::hasFixedLayout() const {
   // Private and (unversioned) internal types always have a
   // fixed layout.
-  if (getEffectiveAccess() != Accessibility::Public)
+  if (getEffectiveAccess() < Accessibility::Public)
     return true;
 
   // Check for an explicit @_fixed_layout attribute.
@@ -1979,10 +2011,6 @@ bool NominalTypeDecl::derivesProtocolConformance(ProtocolDecl *protocol) const {
   auto knownProtocol = protocol->getKnownProtocolKind();
   if (!knownProtocol)
     return false;
-
-  // All nominal types can derive their Error conformance.
-  if (*knownProtocol == KnownProtocolKind::Error)
-    return true;
 
   if (auto *enumDecl = dyn_cast<EnumDecl>(this)) {
     switch (*knownProtocol) {
@@ -3690,10 +3718,10 @@ ParamDecl::ParamDecl(ParamDecl *PD)
     ArgumentName(PD->getArgumentName()),
     ArgumentNameLoc(PD->getArgumentNameLoc()),
     LetVarInOutLoc(PD->getLetVarInOutLoc()),
-    typeLoc(PD->getTypeLoc()),
     DefaultValueAndIsVariadic(PD->DefaultValueAndIsVariadic),
     IsTypeLocImplicit(PD->IsTypeLocImplicit),
     defaultArgumentKind(PD->defaultArgumentKind) {
+  typeLoc = PD->getTypeLoc();
 }
 
 
@@ -4812,15 +4840,78 @@ SourceRange DestructorDecl::getSourceRange() const {
   return { getDestructorLoc(), getBody()->getEndLoc() };
 }
 
-void InfixOperatorDecl::collectOperatorKeywordRanges(SmallVectorImpl
-                                                     <CharSourceRange> &Ranges) {
+PrecedenceGroupDecl *
+PrecedenceGroupDecl::create(DeclContext *dc,
+                            SourceLoc precedenceGroupLoc,
+                            SourceLoc nameLoc,
+                            Identifier name,
+                            SourceLoc lbraceLoc,
+                            SourceLoc associativityKeywordLoc,
+                            SourceLoc associativityValueLoc,
+                            Associativity associativity,
+                            SourceLoc assignmentKeywordLoc,
+                            SourceLoc assignmentValueLoc,
+                            bool isAssignment,
+                            SourceLoc higherThanLoc,
+                            ArrayRef<Relation> higherThan,
+                            SourceLoc lowerThanLoc,
+                            ArrayRef<Relation> lowerThan,
+                            SourceLoc rbraceLoc) {
+  void *memory = dc->getASTContext().Allocate(sizeof(PrecedenceGroupDecl) +
+                    (higherThan.size() + lowerThan.size()) * sizeof(Relation),
+                                              alignof(PrecedenceGroupDecl));
+  return new (memory) PrecedenceGroupDecl(dc, precedenceGroupLoc, nameLoc, name,
+                                          lbraceLoc, associativityKeywordLoc,
+                                          associativityValueLoc, associativity,
+                                          assignmentKeywordLoc,
+                                          assignmentValueLoc, isAssignment,
+                                          higherThanLoc, higherThan,
+                                          lowerThanLoc, lowerThan, rbraceLoc);
+}
+
+PrecedenceGroupDecl::PrecedenceGroupDecl(DeclContext *dc,
+                                         SourceLoc precedenceGroupLoc,
+                                         SourceLoc nameLoc,
+                                         Identifier name,
+                                         SourceLoc lbraceLoc,
+                                         SourceLoc associativityKeywordLoc,
+                                         SourceLoc associativityValueLoc,
+                                         Associativity associativity,
+                                         SourceLoc assignmentKeywordLoc,
+                                         SourceLoc assignmentValueLoc,
+                                         bool isAssignment,
+                                         SourceLoc higherThanLoc,
+                                         ArrayRef<Relation> higherThan,
+                                         SourceLoc lowerThanLoc,
+                                         ArrayRef<Relation> lowerThan,
+                                         SourceLoc rbraceLoc)
+  : Decl(DeclKind::PrecedenceGroup, dc),
+    PrecedenceGroupLoc(precedenceGroupLoc), NameLoc(nameLoc),
+    LBraceLoc(lbraceLoc), RBraceLoc(rbraceLoc),
+    AssociativityKeywordLoc(associativityKeywordLoc),
+    AssociativityValueLoc(associativityValueLoc),
+    AssignmentKeywordLoc(assignmentKeywordLoc),
+    AssignmentValueLoc(assignmentValueLoc),
+    HigherThanLoc(higherThanLoc), LowerThanLoc(lowerThanLoc), Name(name),
+    NumHigherThan(higherThan.size()), NumLowerThan(lowerThan.size()) {
+  PrecedenceGroupDeclBits.Associativity = unsigned(associativity);
+  PrecedenceGroupDeclBits.IsAssignment = isAssignment;
+  memcpy(getHigherThanBuffer(), higherThan.data(),
+         higherThan.size() * sizeof(Relation));
+  memcpy(getLowerThanBuffer(), lowerThan.data(),
+         lowerThan.size() * sizeof(Relation));
+}
+
+void PrecedenceGroupDecl::collectOperatorKeywordRanges(
+                                    SmallVectorImpl<CharSourceRange> &Ranges) {
   auto AddToRange = [&] (SourceLoc Loc, StringRef Word) {
     if (Loc.isValid())
       Ranges.push_back(CharSourceRange(Loc, strlen(Word.data())));
   };
-  AddToRange(AssociativityLoc, "associativity");
-  AddToRange(AssignmentLoc, "assignment");
-  AddToRange(PrecedenceLoc, "precedence");
+  AddToRange(AssociativityKeywordLoc, "associativity");
+  AddToRange(AssignmentKeywordLoc, "assignment");
+  AddToRange(HigherThanLoc, "higherThan");
+  AddToRange(LowerThanLoc, "lowerThan");
 }
 
 bool FuncDecl::isDeferBody() const {
@@ -4833,17 +4924,14 @@ Type TypeBase::getSwiftNewtypeUnderlyingType() {
     return {};
 
   // Make sure the clang node has swift_newtype attribute
-  if (!structDecl->getClangNode())
-    return {};
-  auto clangNode = structDecl->getClangNode();
-  if (!clangNode.getAsDecl() ||
-      !clangNode.castAsDecl()->getAttr<clang::SwiftNewtypeAttr>())
+  auto clangNode = structDecl->getClangDecl();
+  if (!clangNode || !clangNode->hasAttr<clang::SwiftNewtypeAttr>())
     return {};
 
   // Underlying type is the type of rawValue
   for (auto member : structDecl->getMembers())
     if (auto varDecl = dyn_cast<VarDecl>(member))
-      if (varDecl->getName().str() == "rawValue")
+      if (varDecl->getName() == getASTContext().Id_rawValue)
         return varDecl->getType();
 
   return {};

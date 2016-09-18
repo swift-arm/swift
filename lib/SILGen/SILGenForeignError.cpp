@@ -290,6 +290,8 @@ void SILGenFunction::emitForeignErrorBlock(SILLocation loc,
 static SILValue emitUnwrapIntegerResult(SILGenFunction &gen,
                                         SILLocation loc,
                                         SILValue value) {
+  // This is a loop because we want to handle types that wrap integer types,
+  // like ObjCBool (which may be Bool or Int8).
   while (!value->getType().is<BuiltinIntegerType>()) {
     auto structDecl = value->getType().getStructOrBoundGenericStruct();
     assert(structDecl && "value for error result wasn't of struct type!");
@@ -315,20 +317,28 @@ emitResultIsZeroErrorCheck(SILGenFunction &gen, SILLocation loc,
 
   SILValue resultValue =
     emitUnwrapIntegerResult(gen, loc, result.getUnmanagedValue());
-  SILValue zero =
-    gen.B.createIntegerLiteral(loc, resultValue->getType(), 0);
+  CanType resultType = resultValue->getType().getSwiftRValueType();
 
-  ASTContext &ctx = gen.getASTContext();
-  SILValue resultIsError =
-    gen.B.createBuiltinBinaryFunction(loc,
-                                      zeroIsError ? "cmp_eq" : "cmp_ne",
-                                      resultValue->getType(),
-                                      SILType::getBuiltinIntegerType(1, ctx),
-                                      {resultValue, zero});
+  if (!resultType->isBuiltinIntegerType(1)) {
+    SILValue zero =
+      gen.B.createIntegerLiteral(loc, resultValue->getType(), 0);
+
+    ASTContext &ctx = gen.getASTContext();
+    resultValue =
+      gen.B.createBuiltinBinaryFunction(loc,
+                                        "cmp_ne",
+                                        resultValue->getType(),
+                                        SILType::getBuiltinIntegerType(1, ctx),
+                                        {resultValue, zero});
+  }
 
   SILBasicBlock *errorBB = gen.createBasicBlock(FunctionSection::Postmatter);
   SILBasicBlock *contBB = gen.createBasicBlock();
-  gen.B.createCondBranch(loc, resultIsError, errorBB, contBB);
+
+  if (zeroIsError)
+    gen.B.createCondBranch(loc, resultValue, contBB, errorBB);
+  else
+    gen.B.createCondBranch(loc, resultValue, errorBB, contBB);
 
   gen.emitForeignErrorBlock(loc, errorBB, errorSlot);
 

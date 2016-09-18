@@ -62,6 +62,34 @@ class TestTimeZone : TestTimeZoneSuper {
         
         expectNotEqual(autoupdating, current)
     }
+
+    func test_AnyHashableContainingTimeZone() {
+        let values: [TimeZone] = [
+            TimeZone(identifier: "America/Los_Angeles")!,
+            TimeZone(identifier: "Europe/Kiev")!,
+            TimeZone(identifier: "Europe/Kiev")!,
+        ]
+        let anyHashables = values.map(AnyHashable.init)
+        expectEqual(TimeZone.self, type(of: anyHashables[0].base))
+        expectEqual(TimeZone.self, type(of: anyHashables[1].base))
+        expectEqual(TimeZone.self, type(of: anyHashables[2].base))
+        expectNotEqual(anyHashables[0], anyHashables[1])
+        expectEqual(anyHashables[1], anyHashables[2])
+    }
+
+    func test_AnyHashableCreatedFromNSTimeZone() {
+        let values: [NSTimeZone] = [
+            NSTimeZone(name: "America/Los_Angeles")!,
+            NSTimeZone(name: "Europe/Kiev")!,
+            NSTimeZone(name: "Europe/Kiev")!,
+        ]
+        let anyHashables = values.map(AnyHashable.init)
+        expectEqual(TimeZone.self, type(of: anyHashables[0].base))
+        expectEqual(TimeZone.self, type(of: anyHashables[1].base))
+        expectEqual(TimeZone.self, type(of: anyHashables[2].base))
+        expectNotEqual(anyHashables[0], anyHashables[1])
+        expectEqual(anyHashables[1], anyHashables[2])
+    }
 }
 
 #if !FOUNDATION_XCTEST
@@ -69,5 +97,7 @@ var TimeZoneTests = TestSuite("TestTimeZone")
 TimeZoneTests.test("test_timeZoneBasics") { TestTimeZone().test_timeZoneBasics() }
 TimeZoneTests.test("test_bridgingAutoupdating") { TestTimeZone().test_bridgingAutoupdating() }
 TimeZoneTests.test("test_equality") { TestTimeZone().test_equality() }
+TimeZoneTests.test("test_AnyHashableContainingTimeZone") { TestTimeZone().test_AnyHashableContainingTimeZone() }
+TimeZoneTests.test("test_AnyHashableCreatedFromNSTimeZone") { TestTimeZone().test_AnyHashableCreatedFromNSTimeZone() }
 runAllTests()
 #endif

@@ -47,7 +47,7 @@ struct S1 : P1 {
   func foo() -> X {}
 }
 
-prefix operator % {}
+prefix operator %
 
 protocol P2 {
   associatedtype Assoc2
@@ -82,7 +82,7 @@ struct S4<T> : P3, P4 {
 takeP4(S4<Int>())
 
 // <rdar://problem/14680393>
-infix operator ~> { precedence 255 }
+infix operator ~>
 
 protocol P5 { }
 
@@ -173,7 +173,7 @@ struct C<a : B> : B { // expected-error {{type 'C<a>' does not conform to protoc
 
 // SR-511
 protocol sr511 {
-  typealias Foo // expected-warning {{use of 'typealias' to declare associated types is deprecated; use 'associatedtype' instead}} 
+  typealias Foo // expected-error {{typealias is missing an assigned type; use 'associatedtype' to define an associated type requirement}}
 }
 
 associatedtype Foo = Int // expected-error {{associated types can only be defined in a protocol; define a type or introduce a 'typealias' to satisfy an associated type requirement}}

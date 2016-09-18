@@ -17,8 +17,6 @@ public class BridgedClassSub : BridgedClass { }
 extension LazyFilterIterator : _ObjectiveCBridgeable { // expected-error{{conformance of 'LazyFilterIterator' to '_ObjectiveCBridgeable' can only be written in module 'Swift'}}
   public typealias _ObjectiveCType = BridgedClassSub
 
-  public static func _isBridgedToObjectiveC() -> Bool { return true }
-
   public func _bridgeToObjectiveC() -> _ObjectiveCType {
     return BridgedClassSub()
   }
@@ -46,10 +44,6 @@ extension LazyFilterIterator : _ObjectiveCBridgeable { // expected-error{{confor
 struct BridgedStruct : Hashable, _ObjectiveCBridgeable {
   var hashValue: Int { return 0 }
 
- static func _isBridgedToObjectiveC() -> Bool {
-    return true
-  }
-  
   func _bridgeToObjectiveC() -> BridgedClass {
     return BridgedClass()
   }
@@ -177,7 +171,7 @@ func dictionaryToNSDictionary() {
 
   // <rdar://problem/17134986>
   var bcOpt: BridgedClass?
-  nsd = [BridgedStruct() : bcOpt] // expected-error{{value of type 'BridgedStruct' does not conform to expected dictionary key type 'NSCopying'}}
+  nsd = [BridgedStruct() : bcOpt]
   bcOpt = nil
   _ = nsd
 }
@@ -270,7 +264,7 @@ func rdar19831698() {
 // expected-note@-1{{overloads for '+'}}
   var v72 = true + true // expected-error{{binary operator '+' cannot be applied to two 'Bool' operands}}
   // expected-note @-1 {{overloads for '+' exist with these partially matching parameter lists:}}
-  var v73 = true + [] // expected-error{{binary operator '+' cannot be applied to operands of type 'Bool' and '[_]'}}
+  var v73 = true + [] // expected-error{{binary operator '+' cannot be applied to operands of type 'Bool' and '[Any]'}}
   // expected-note @-1 {{overloads for '+' exist with these partially matching parameter lists:}}
   var v75 = true + "str" // expected-error {{binary operator '+' cannot be applied to operands of type 'Bool' and 'String'}} expected-note {{expected an argument list of type '(String, String)'}}
 }
@@ -358,4 +352,10 @@ func bridgeAnyContainerToAnyObject(x: [Any], y: [NSObject: Any]) {
   z = y as AnyObject
 
   _ = z
+}
+
+func bridgeTupleToAnyObject() {
+  let x = (1, "two")
+  let y = x as AnyObject
+  _ = y
 }

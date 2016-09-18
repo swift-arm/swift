@@ -204,7 +204,9 @@ NSStringAPIs.test("init(utf8String:)") {
     i += 1
   }
   up[i] = 0
-  expectOptionalEqual(s, String(utf8String: UnsafePointer(up)))
+  let cstr = UnsafeMutableRawPointer(up)
+    .bindMemory(to: CChar.self, capacity: 100)
+  expectOptionalEqual(s, String(utf8String: cstr))
   up.deallocate(capacity: 100)
 }
 
@@ -839,11 +841,6 @@ NSStringAPIs.test("init(format:locale:arguments:)") {
       locale: nil, arguments: args))
 }
 
-NSStringAPIs.test("lastPathComponent") {
-  expectEqual("bar", "/foo/bar".lastPathComponent)
-  expectEqual("абв", "/foo/абв".lastPathComponent)
-}
-
 NSStringAPIs.test("utf16Count") {
   expectEqual(1, "a".utf16.count)
   expectEqual(2, "\u{0001F60A}".utf16.count)
@@ -1031,11 +1028,6 @@ NSStringAPIs.test("paragraphRangeFor(_:)") {
 NSStringAPIs.test("pathComponents") {
   expectEqual([ "/", "foo", "bar" ] as [NSString], ("/foo/bar" as NSString).pathComponents as [NSString])
   expectEqual([ "/", "абв", "где" ] as [NSString], ("/абв/где" as NSString).pathComponents as [NSString])
-}
-
-NSStringAPIs.test("pathExtension") {
-  expectEqual("", "/foo/bar".pathExtension)
-  expectEqual("txt", "/foo/bar.txt".pathExtension)
 }
 
 NSStringAPIs.test("precomposedStringWithCanonicalMapping") {
@@ -1357,24 +1349,11 @@ NSStringAPIs.test("appendingFormat(_:_:...)") {
       .appendingFormat("def %@ %ld", formatArg, 42))
 }
 
-NSStringAPIs.test("appendingPathComponent(_:)") {
-  expectEqual("", "".appendingPathComponent(""))
-  expectEqual("a.txt", "".appendingPathComponent("a.txt"))
-  expectEqual("/tmp/a.txt", "/tmp".appendingPathComponent("a.txt"))
-}
-
 NSStringAPIs.test("appending(_:)") {
   expectEqual("", "".appending(""))
   expectEqual("a", "a".appending(""))
   expectEqual("a", "".appending("a"))
   expectEqual("さ\u{3099}", "さ".appending("\u{3099}"))
-}
-
-NSStringAPIs.test("deletingLastPathComponent") {
-  expectEqual("", "".deletingLastPathComponent)
-  expectEqual("/", "/".deletingLastPathComponent)
-  expectEqual("/", "/tmp".deletingLastPathComponent)
-  expectEqual("/tmp", "/tmp/a.txt".deletingLastPathComponent)
 }
 
 NSStringAPIs.test("folding(options:locale:)") {
@@ -1593,22 +1572,6 @@ NSStringAPIs.test("replacingPercentEscapes(using:)/rdar18029471")
   expectEmpty(
     "abcd%FF".replacingPercentEscapes(
       using: .ascii))
-}
-
-NSStringAPIs.test("resolvingSymlinksInPath") {
-  // <rdar://problem/18030188> Difference between
-  // resolvingSymlinksInPath and stringByStandardizingPath is unclear
-  expectEqual("", "".resolvingSymlinksInPath)
-  expectEqual(
-    "/var", "/private/var/tmp////..//".resolvingSymlinksInPath)
-}
-
-NSStringAPIs.test("standardizingPath") {
-  // <rdar://problem/18030188> Difference between
-  // resolvingSymlinksInPath and standardizingPath is unclear
-  expectEqual("", "".standardizingPath)
-  expectEqual(
-    "/var", "/private/var/tmp////..//".standardizingPath)
 }
 
 NSStringAPIs.test("trimmingCharacters(in:)") {

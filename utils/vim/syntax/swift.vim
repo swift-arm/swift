@@ -41,6 +41,7 @@ syn keyword swiftImport skipwhite nextgroup=swiftImportModule
 syn keyword swiftDefinitionModifier
       \ convenience
       \ dynamic
+      \ fileprivate
       \ final
       \ internal
       \ nonmutating
@@ -54,7 +55,6 @@ syn keyword swiftDefinitionModifier
 
 syn keyword swiftIdentifierKeyword
       \ Self
-      \ dynamicType
       \ metatype
       \ self
       \ super

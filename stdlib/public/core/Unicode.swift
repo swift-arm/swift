@@ -131,13 +131,14 @@ public protocol UnicodeCodec {
   ///     time.
   static func encode(
     _ input: UnicodeScalar,
-    into processCodeUnit: @noescape (CodeUnit) -> Void
+    into processCodeUnit: (CodeUnit) -> Void
   )
 
   /// Searches for the first occurrence of a `CodeUnit` that is equal to 0.
   ///
   /// Is an equivalent of `strlen` for C-strings.
-  /// - Complexity: O(n)
+  ///
+  /// - Complexity: O(*n*)
   static func _nullCodeUnitOffset(in input: UnsafePointer<CodeUnit>) -> Int
 }
 
@@ -344,11 +345,10 @@ public struct UTF8 : UnicodeCodec {
         return (nil, 3)
       }
       // Extract data bits.
-      // FIXME(integers): remove extra type casts
-      let value = (buffer & 0x3f000000) >> (24 as UInt32)
-                | (buffer & 0x003f0000) >> (10 as UInt32)
-                | (buffer & 0x00003f00) << (4 as UInt32)
-                | (buffer & 0x00000007) << (18 as UInt32)
+      let value = (buffer & 0x3f000000) >> 24
+                | (buffer & 0x003f0000) >> 10
+                | (buffer & 0x00003f00) << 4
+                | (buffer & 0x00000007) << 18
       return (value, 4)
 
     default: // Invalid sequence (CU0 invalid).
@@ -374,7 +374,7 @@ public struct UTF8 : UnicodeCodec {
   ///     time.
   public static func encode(
     _ input: UnicodeScalar,
-    into processCodeUnit: @noescape (CodeUnit) -> Void
+    into processCodeUnit: (CodeUnit) -> Void
   ) {
     var c = UInt32(input)
     var buf3 = UInt8(c & 0xFF)
@@ -427,7 +427,9 @@ public struct UTF8 : UnicodeCodec {
   }
 
   public static func _nullCodeUnitOffset(in input: UnsafePointer<CodeUnit>) -> Int {
-    return Int(_swift_stdlib_strlen(UnsafePointer(input)))
+    // Relying on a permissive memory model in C.
+    let cstr = unsafeBitCast(input, to: UnsafePointer<CChar>.self)
+    return Int(_swift_stdlib_strlen(cstr))
   }
   // Support parsing C strings as-if they are UTF8 strings.
   public static func _nullCodeUnitOffset(in input: UnsafePointer<CChar>) -> Int {
@@ -569,7 +571,7 @@ public struct UTF16 : UnicodeCodec {
   ///     time.
   public static func encode(
     _ input: UnicodeScalar,
-    into processCodeUnit: @noescape (CodeUnit) -> Void
+    into processCodeUnit: (CodeUnit) -> Void
   ) {
     let scalarValue: UInt32 = UInt32(input)
 
@@ -669,7 +671,7 @@ public struct UTF32 : UnicodeCodec {
   ///     time.
   public static func encode(
     _ input: UnicodeScalar,
-    into processCodeUnit: @noescape (CodeUnit) -> Void
+    into processCodeUnit: (CodeUnit) -> Void
   ) {
     processCodeUnit(UInt32(input))
   }
@@ -715,7 +717,7 @@ public func transcode<Input, InputEncoding, OutputEncoding>(
   from inputEncoding: InputEncoding.Type,
   to outputEncoding: OutputEncoding.Type,
   stoppingOnError stopOnError: Bool,
-  into processCodeUnit: @noescape (OutputEncoding.CodeUnit) -> Void
+  into processCodeUnit: (OutputEncoding.CodeUnit) -> Void
 ) -> Bool
   where
   Input : IteratorProtocol,
@@ -762,7 +764,7 @@ internal func _transcodeSomeUTF16AsUTF8<Input>(
   typealias _UTF8Chunk = _StringCore._UTF8Chunk
 
   let endIndex = input.endIndex
-  let utf8Max = sizeof(_UTF8Chunk.self)
+  let utf8Max = MemoryLayout<_UTF8Chunk>.size
   var result: _UTF8Chunk = 0
   var utf8Count = 0
   var nextIndex = startIndex
@@ -837,7 +839,7 @@ internal func _transcodeSomeUTF16AsUTF8<Input>(
     nextIndex = input.index(nextIndex, offsetBy: utf16Length)
   }
   // FIXME: Annoying check, courtesy of <rdar://problem/16740169>
-  if utf8Count < sizeofValue(result) {
+  if utf8Count < MemoryLayout.size(ofValue: result) {
     result |= ~0 << numericCast(utf8Count * 8)
   }
   return (nextIndex, result)
@@ -1019,11 +1021,11 @@ extension UTF16 {
     destination: UnsafeMutablePointer<U>,
     count: Int
   ) {
-    if strideof(T.self) == strideof(U.self) {
+    if MemoryLayout<T>.stride == MemoryLayout<U>.stride {
       _memcpy(
         dest: UnsafeMutablePointer(destination),
         src: UnsafeMutablePointer(source),
-        size: UInt(count) * UInt(strideof(U.self)))
+        size: UInt(count) * UInt(MemoryLayout<U>.stride))
     }
     else {
       for i in 0..<count {
@@ -1097,7 +1099,7 @@ extension UTF16 {
           return nil
         }
         isAscii = false
-        count += width(UnicodeScalar(0xfffd))
+        count += width(UnicodeScalar(0xfffd)!)
       }
     }
     return (count, isAscii)
@@ -1136,6 +1138,16 @@ extension UnicodeCodec {
 
 @available(*, unavailable, renamed: "UnicodeCodec")
 public typealias UnicodeCodecType = UnicodeCodec
+
+extension UnicodeCodec {
+  @available(*, unavailable, renamed: "encode(_:into:)")
+  public static func encode(
+    _ input: UnicodeScalar,
+    output put: (CodeUnit) -> Void
+  ) {
+    Builtin.unreachable()
+  }
+}
 
 @available(*, unavailable, message: "use 'transcode(_:from:to:stoppingOnError:into:)'")
 public func transcode<Input, InputEncoding, OutputEncoding>(

@@ -10,6 +10,13 @@
 //
 //===----------------------------------------------------------------------===//
 
+// FIXME(ABI)(compiler limitation): This protocol exists to identify
+// hashable types.  It is used for defining an imitation of a generic
+// subscript on `Dictionary<AnyHashable, *>`.
+public protocol _Hashable {
+  func _toAnyHashable() -> AnyHashable
+}
+
 /// A type that provides an integer hash value.
 ///
 /// You can use any type that conforms to the `Hashable` protocol in a set or
@@ -83,11 +90,30 @@
 ///         print("New tap detected at (\(nextTap.x), \(nextTap.y)).")
 ///     }
 ///     // Prints "New tap detected at (0, 1).")
-public protocol Hashable : Equatable {
+public protocol Hashable : _Hashable, Equatable {
   /// The hash value.
   ///
   /// Hash values are not guaranteed to be equal across different executions of
   /// your program. Do not save hash values to use during a future execution.
   var hashValue: Int { get }
+}
+
+public enum _RuntimeHelpers {}
+
+extension _RuntimeHelpers {
+  @_silgen_name("swift_stdlib_Hashable_isEqual_indirect")
+  public static func Hashable_isEqual_indirect<T : Hashable>(
+    _ lhs: UnsafePointer<T>,
+    _ rhs: UnsafePointer<T>
+  ) -> Bool {
+    return lhs.pointee == rhs.pointee
+  }
+
+  @_silgen_name("swift_stdlib_Hashable_hashValue_indirect")
+  public static func Hashable_hashValue_indirect<T : Hashable>(
+    _ value: UnsafePointer<T>
+  ) -> Int {
+    return value.pointee.hashValue
+  }
 }
 

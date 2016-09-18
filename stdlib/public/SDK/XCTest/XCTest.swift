@@ -44,7 +44,7 @@ func _XCTFailureDescription(_ assertionType: _XCTAssertionType, _ formatIndex: U
 // --- Exception Support ---
 
 @_silgen_name("_XCTRunThrowableBlockBridge")
-func _XCTRunThrowableBlockBridge(_: @noescape @convention(block) () -> Void) -> NSDictionary
+func _XCTRunThrowableBlockBridge(_: @convention(block) () -> Void) -> NSDictionary
 
 /// The Swift-style result of evaluating a block which may throw an exception.
 enum _XCTThrowableBlockResult {
@@ -56,7 +56,7 @@ enum _XCTThrowableBlockResult {
 
 /// Asks some Objective-C code to evaluate a block which may throw an exception or error,
 /// and if it does consume the exception and return information about it.
-func _XCTRunThrowableBlock(_ block: @noescape () throws -> Void) -> _XCTThrowableBlockResult {
+func _XCTRunThrowableBlock(_ block: () throws -> Void) -> _XCTThrowableBlockResult {
   var blockErrorOptional: Error?
   
   let d = _XCTRunThrowableBlockBridge({
@@ -996,7 +996,7 @@ public func XCTAssertLessThanOrEqual<T : Comparable>(_ expression1: @autoclosure
   }
 }
 
-public func XCTAssertThrowsError<T>(_ expression: @autoclosure () throws -> T, _ message: @autoclosure () -> String = "", file: StaticString = #file, line: UInt = #line, _ errorHandler: (error: Error) -> Void = { _ in }) -> Void {
+public func XCTAssertThrowsError<T>(_ expression: @autoclosure () throws -> T, _ message: @autoclosure () -> String = "", file: StaticString = #file, line: UInt = #line, _ errorHandler: (_ error: Error) -> Void = { _ in }) -> Void {
   // evaluate expression exactly once
   var caughtErrorOptional: Error?
   
@@ -1011,7 +1011,7 @@ public func XCTAssertThrowsError<T>(_ expression: @autoclosure () throws -> T, _
   switch result {
   case .success:
     if let caughtError = caughtErrorOptional {
-      errorHandler(error: caughtError)
+      errorHandler(caughtError)
     } else {
       _XCTRegisterFailure(true, "XCTAssertThrowsError failed: did not throw an error", message, file, line)
     }

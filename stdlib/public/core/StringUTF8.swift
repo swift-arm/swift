@@ -38,13 +38,13 @@ extension _StringCore {
     if _fastPath(elementWidth == 1) {
       // How many UTF-16 code units might we use before we've filled up
       // our _UTF8Chunk with UTF-8 code units?
-      let utf16Count = Swift.min(sizeof(_UTF8Chunk.self), count - i)
+      let utf16Count = Swift.min(MemoryLayout<_UTF8Chunk>.size, count - i)
 
       var result: _UTF8Chunk = ~0 // Start with all bits set
 
       _memcpy(
-        dest: UnsafeMutablePointer(Builtin.addressof(&result)),
-        src: UnsafeMutablePointer(startASCII + i),
+        dest: UnsafeMutableRawPointer(Builtin.addressof(&result)),
+        src: startASCII + i,
         size: numericCast(utf16Count))
 
       // Convert the _UTF8Chunk into host endianness.
@@ -253,7 +253,7 @@ extension String {
 
       /// A Buffer value with the high byte set
       internal static var _bufferHiByte: Buffer {
-        return 0xFF << numericCast((sizeof(Buffer.self) &- 1) &* 8)
+        return 0xFF << numericCast((MemoryLayout<Buffer>.size &- 1) &* 8)
       }
       
       /// Consume a byte of the given buffer: shift out the low byte
@@ -375,7 +375,7 @@ extension String {
       return UTF8View(self._core)
     }
     set {
-      self = String(newValue)
+      self = String(describing: newValue)
     }
   }
 
@@ -383,35 +383,21 @@ extension String {
     return _core.elementWidth == 1 ? _core.startASCII : nil
   }
 
-  /// A contiguously stored null-terminated UTF-8 representation of
-  /// the string.
+  /// A contiguously stored null-terminated UTF-8 representation of the string.
   ///
-  /// To access the underlying memory, invoke
-  /// `withUnsafeBufferPointer` on the array.
+  /// To access the underlying memory, invoke `withUnsafeBufferPointer` on the
+  /// array.
   ///
   ///     let s = "Hello!"
-  ///     let bytes = s.nulTerminatedUTF8
+  ///     let bytes = s.utf8CString
   ///     print(bytes)
   ///     // Prints "[72, 101, 108, 108, 111, 33, 0]"
-  ///     
+  ///
   ///     bytes.withUnsafeBufferPointer { ptr in
-  ///         print(strlen(UnsafePointer(ptr.baseAddress!)))
+  ///         print(strlen(ptr.baseAddress!))
   ///     }
   ///     // Prints "6"
-  public var nulTerminatedUTF8: ContiguousArray<UTF8.CodeUnit> {
-    var result = ContiguousArray<UTF8.CodeUnit>()
-    result.reserveCapacity(utf8.count + 1)
-    result += utf8
-    result.append(0)
-    return result
-  }
-
-  /// A contiguously stored null-terminated UTF-8 representation of
-  /// the string.
-  ///
-  /// This is a variation on nulTerminatedUTF8 that creates an array
-  /// of element type CChar for use with CString API's.
-  public var nulTerminatedUTF8CString: ContiguousArray<CChar> {
+  public var utf8CString: ContiguousArray<CChar> {
     var result = ContiguousArray<CChar>()
     result.reserveCapacity(utf8.count + 1)
     for c in utf8 {
@@ -422,13 +408,17 @@ extension String {
   }
 
   internal func _withUnsafeBufferPointerToUTF8<R>(
-    _ body: @noescape (UnsafeBufferPointer<UTF8.CodeUnit>) throws -> R
+    _ body: (UnsafeBufferPointer<UTF8.CodeUnit>) throws -> R
   ) rethrows -> R {
     let ptr = _contiguousUTF8
     if ptr != nil {
       return try body(UnsafeBufferPointer(start: ptr, count: _core.count))
     }
-    return try nulTerminatedUTF8.withUnsafeBufferPointer(body)
+    var nullTerminatedUTF8 = ContiguousArray<UTF8.CodeUnit>()
+    nullTerminatedUTF8.reserveCapacity(utf8.count + 1)
+    nullTerminatedUTF8 += utf8
+    nullTerminatedUTF8.append(0)
+    return try nullTerminatedUTF8.withUnsafeBufferPointer(body)
   }
 
   /// Creates a string corresponding to the given sequence of UTF-8 code units.
@@ -725,3 +715,9 @@ extension String.UTF8View : CustomPlaygroundQuickLookable {
   }
 }
 
+extension String {
+  @available(*, unavailable, message: "Please use String.utf8CString instead.")
+  public var nulTerminatedUTF8: ContiguousArray<UTF8.CodeUnit> {
+    Builtin.unreachable()
+  }
+}
